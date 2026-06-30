@@ -61,6 +61,7 @@ class EspnMatchDetailClient:
 
     def scoreboard(self, league: str, dates: str | None = None) -> ScoreboardResponse:
         _validate_league(league)
+        validate_scoreboard_dates(dates)
         params = {"dates": dates} if dates else None
         try:
             response = httpx.get(
@@ -143,6 +144,18 @@ def _validate_league(league: str) -> None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             f"Unsupported ESPN soccer league: {league}",
+        )
+
+
+def validate_scoreboard_dates(dates: str | None) -> None:
+    if dates is None:
+        return
+    parts = dates.split("-")
+    valid = len(parts) in {1, 2} and all(len(part) == 8 and part.isdigit() for part in parts)
+    if not valid:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "dates must be YYYYMMDD or YYYYMMDD-YYYYMMDD",
         )
 
 

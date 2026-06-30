@@ -132,6 +132,8 @@ App flow:
 2. Render match cards using `matches[].matchId`, score, teams, kickoff, and status.
 3. When a user taps a match, call `GET /api/v1/matches/eng.1/{matchId}/detail`.
 
+`dates` must be `YYYYMMDD` or `YYYYMMDD-YYYYMMDD`. For example, use `20260609`, not `2026069`.
+
 Normalized match detail response:
 
 ```json

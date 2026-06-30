@@ -327,6 +327,12 @@ def test_match_scoreboard_returns_event_ids_for_detail():
     assert body["matches"][0]["statusDescription"] == "Full Time"
 
 
+def test_match_scoreboard_rejects_malformed_dates():
+    response = client.get("/api/v1/matches/fifa.world/scoreboard?dates=2026069")
+    assert response.status_code == 422
+    assert response.json()["detail"] == "dates must be YYYYMMDD or YYYYMMDD-YYYYMMDD"
+
+
 def test_health_check():
     response = client.get("/health")
     assert response.status_code == 200
