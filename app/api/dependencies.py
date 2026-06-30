@@ -28,10 +28,11 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> CurrentUser:
     settings = get_settings()
-    if settings.allow_dev_auth and credentials and credentials.credentials.startswith("dev:"):
+    dev_auth_enabled = settings.allow_dev_auth and settings.app_env == "development"
+    if dev_auth_enabled and credentials and credentials.credentials.startswith("dev:"):
         return CurrentUser(credentials.credentials.removeprefix("dev:"))
     if credentials is None:
-        if settings.allow_dev_auth and settings.app_env == "development":
+        if dev_auth_enabled:
             return CurrentUser("swagger-user")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing Firebase ID token")
     if credentials.scheme.lower() != "bearer":

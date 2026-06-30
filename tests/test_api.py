@@ -86,3 +86,9 @@ def test_username_availability():
     available = client.get("/api/v1/users/username/availability?username=fresh_user")
     assert available.status_code == 200
     assert available.json() == {"username": "fresh_user", "available": True}
+
+
+def test_health_check():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
