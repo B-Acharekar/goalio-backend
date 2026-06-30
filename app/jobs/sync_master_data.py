@@ -10,6 +10,9 @@ from app.services.master_data import (
     COMPETITIONS_BY_ID,
     ApiFootballError,
     ApiFootballClient,
+    EspnFootballClient,
+    EspnFootballError,
+    FallbackFootballClient,
     FirestoreMasterDataStore,
     MasterDataSyncService,
     is_sync_due,
@@ -58,9 +61,16 @@ def main() -> None:
         if args.competition
         else list(COMPETITIONS)
     )
-    api = ApiFootballClient(
+    api_football = ApiFootballClient(
         api_key,
         request_interval_seconds=settings.football_request_interval_seconds,
+        max_requests=settings.api_football_max_requests,
+    )
+    api = FallbackFootballClient(
+        EspnFootballClient(
+            request_interval_seconds=settings.espn_request_interval_seconds,
+        ),
+        api_football,
     )
     try:
         store = FirestoreMasterDataStore(get_firestore_client())
@@ -83,9 +93,9 @@ def main() -> None:
                     f"{competition.name}: processed={result.teams_processed} "
                     f"requests={result.requests_used} completed={result.completed}"
                 )
-            except (ApiFootballError, httpx.HTTPError) as error:
+            except (ApiFootballError, EspnFootballError, httpx.HTTPError) as error:
                 print(f"stop {competition.name}: {error}")
-                break
+                continue
     finally:
         api.close()
 

@@ -110,7 +110,7 @@ class FirestoreFootballRepository:
 
     def _player_results(self, player_data: list[dict]) -> list[PlayerResult]:
         team_ids = {
-            int(team_id)
+            str(team_id)
             for player in player_data
             for team_id in player.get("team_ids", [])
         }
@@ -122,7 +122,7 @@ class FirestoreFootballRepository:
             else []
         )
         team_names = {
-            int(snapshot.id): snapshot.to_dict().get("name", "")
+            str(snapshot.id): snapshot.to_dict().get("name", "")
             for snapshot in team_snapshots
             if snapshot.exists
         }
@@ -131,9 +131,9 @@ class FirestoreFootballRepository:
                 id=str(player["id"]),
                 name=player["name"],
                 team=", ".join(
-                    team_names[team_id]
+                    team_names[str(team_id)]
                     for team_id in player.get("team_ids", [])
-                    if team_id in team_names
+                    if str(team_id) in team_names
                 ),
                 imageUrl=player.get("photo"),
             )

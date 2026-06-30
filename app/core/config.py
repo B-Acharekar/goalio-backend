@@ -11,8 +11,10 @@ class Settings(BaseSettings):
     allow_dev_auth: bool = False
     api_football_key: str = ""
     football_season: int = 2026
-    football_sync_max_requests: int = 95
+    football_sync_max_requests: int = 250
     football_request_interval_seconds: float = 6.2
+    espn_request_interval_seconds: float = 0.5
+    api_football_max_requests: int = 95
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -22,78 +22,71 @@ Use a Python 3.12 web service on Render, Railway, Heroku, or another buildpack-b
 - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"`
 - Health-check path: `/health`
 
-The included `Procfile` contains the same start command. Use `.env.production.example` as the
-exact environment-variable template in Render:
-
-```text
-APP_ENV=production
-FIREBASE_PROJECT_ID=goalio-c42bc
-ALLOWED_ORIGINS=https://your-web-client.example
-ALLOW_DEV_AUTH=false
-GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/firebase-service-account.json
-```
-
-On Render, add a Secret File named `firebase-service-account.json`, paste the complete Firebase
-service-account JSON as its contents, and add this environment variable:
+Use `.env.production.example` as the Render environment-variable template. Add a Render Secret
+File named `firebase-service-account.json` containing the complete Firebase service-account JSON,
+then set:
 
 ```text
 GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/firebase-service-account.json
 ```
 
-Do not also set `FIREBASE_SERVICE_ACCOUNT_JSON`. That environment variable remains available as
-an alternative for hosts without secret-file support. Never commit the service-account JSON.
+Do not also set `FIREBASE_SERVICE_ACCOUNT_JSON`. Never commit the service-account JSON.
 
 After deployment, verify `GET /health` returns `{"status":"ok"}`, then set the Android Remote
 Config key `backend_base_url` to the deployment's HTTPS origin.
 
 ## Football master-data sync
 
-The sync imports these API-Football v3 competitions:
+The importer uses ESPN's public site JSON as its primary seed source and API-Football v3 as the
+fallback when ESPN cannot provide a competition. The Android app never calls either provider;
+it reads the resulting Firestore catalog through this backend.
 
-| Competition | API league ID |
-| --- | ---: |
-| Premier League | 39 |
-| LaLiga | 140 |
-| Serie A | 135 |
-| Bundesliga | 78 |
-| Ligue 1 | 61 |
-| World Cup | 1 |
+| Competition | ESPN code | API-Football ID |
+| --- | --- | ---: |
+| Premier League | `eng.1` | 39 |
+| LaLiga | `esp.1` | 140 |
+| Serie A | `ita.1` | 135 |
+| Bundesliga | `ger.1` | 78 |
+| Ligue 1 | `fra.1` | 61 |
+| World Cup | `fifa.world` | 1 |
 
-Set `API_FOOTBALL_KEY` as a secret environment variable. Do not put the real key in a committed
-environment file. The importer maintains:
+Set `API_FOOTBALL_KEY` as a secret environment variable for fallback only. The importer maintains:
 
-- `teams/{teamId}` for active clubs and national teams;
-- `players/{playerId}`, deduplicated by the API-Football player ID;
+- `teams/{source_teamId}` for active clubs and national teams;
+- `players/{source_playerId}`, deduplicated by ESPN athlete ID when ESPN is used;
 - `team_players/{teamId_playerId}` for club and country membership;
-- `master_data_sync/{competitionId_season}` for resumable progress.
+- `master_data_sync/{competitionId_season}` for resumable progress and provider tracking.
 
 Create one daily Render Cron Job using the same repository, environment variables, Firebase
-Secret File, and build command as the web service. Use this command:
+Secret File, and build command as the web service:
 
 ```text
-python -m app.jobs.sync_master_data --season 2026 --due-only --max-requests 95
+python -m app.jobs.sync_master_data --season 2026 --due-only --max-requests 250
 ```
 
-Suggested UTC schedule: `0 1 * * *`. The job spends six requests checking the competition season
-dates, starts each competition seven days before its season, and resumes from the next team on
-the following day when the request budget is exhausted. It keeps trying through fourteen days
-after the published start date. Requests are spaced by `FOOTBALL_REQUEST_INTERVAL_SECONDS=6.2`
-to stay below the free plan's 10-request-per-minute limit, and HTTP 429 responses are retried once.
+Suggested UTC schedule: `0 1 * * *`. The job checks ESPN's published season window, starts each
+competition seven days before that window, and resumes from the next team after interruption.
+ESPN requests are spaced by `ESPN_REQUEST_INTERVAL_SECONDS=0.5`. If ESPN team data is unavailable,
+API-Football fallback is limited to `API_FOOTBALL_MAX_REQUESTS=95` and paced at 6.2 seconds.
 
 For an immediate manual import, omit `--due-only`:
 
 ```text
-python -m app.jobs.sync_master_data --season 2026 --max-requests 95
+python -m app.jobs.sync_master_data --season 2026 --max-requests 250
 ```
 
-Run that command again on later days until every competition reports `completed=True`. Squad
-responses provide player ID, name, age, position, and photo. `firstname`, `lastname`, and
-`nationality` remain null unless a separate profile-enrichment import is added; fetching a profile
-per player would exceed the 100-request daily plan.
+ESPN is undocumented and can change without notice; Firestore remains the stable master-data
+boundary. The API-Football free plan used during development rejected 2026 and allowed only
+2022-2024, so it cannot serve as a 2026 fallback unless that plan is upgraded.
 
-The API subscription must provide the requested season. At the time this integration was tested,
-the supplied free-plan key rejected season 2026 and reported access only to seasons 2022–2024.
-Upgrade the API-Football plan before enabling the 2026 cron job.
+## Football catalog endpoints
+
+```text
+GET /api/v1/football/teams?limit=100&cursor=...
+GET /api/v1/football/players?limit=100&cursor=...
+GET /api/v1/football/teams/search?q=arsenal
+GET /api/v1/football/players/search?q=messi
+```
 
 ## Test protected routes in Swagger
 
@@ -101,8 +94,8 @@ Production requests must always use a Firebase ID token. For local Swagger testi
 
 1. Set `APP_ENV=development` and `ALLOW_DEV_AUTH=true` in the ignored local `.env` file.
 2. Fully restart Uvicorn so configuration and Firebase clients are reloaded.
-3. Open `/docs` and call the profile and football endpoints normally. Missing credentials use the isolated local user `swagger-user`.
-4. To test multiple users, click **Authorize** and enter a token such as `dev:second-user` (do not type the `Bearer` prefix).
+3. Open `/docs`; missing credentials use the isolated local user `swagger-user`.
+4. To test multiple users, authorize with `dev:second-user` without the `Bearer` prefix.
 
 Development tokens are accepted only when both `APP_ENV=development` and
 `ALLOW_DEV_AUTH=true`.
