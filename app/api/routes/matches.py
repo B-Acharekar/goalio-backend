@@ -35,3 +35,15 @@ def match_scoreboard(
 ) -> ScoreboardResponse:
     validate_scoreboard_dates(dates)
     return client.scoreboard(league, dates)
+
+
+@router.get("/{league}/schedule", response_model=ScoreboardResponse)
+def match_schedule(
+    league: str = Path(max_length=40),
+    date: str | None = Query(default=None, max_length=10),
+    from_date: str | None = Query(default=None, alias="from", max_length=10),
+    to_date: str | None = Query(default=None, alias="to", max_length=10),
+    _: CurrentUser = Depends(get_current_user),
+    client: EspnMatchDetailClient = Depends(get_match_detail_client),
+) -> ScoreboardResponse:
+    return client.schedule(league, date=date, from_date=from_date, to_date=to_date)

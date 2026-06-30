@@ -62,6 +62,25 @@ class EspnMatchDetailClient:
     def scoreboard(self, league: str, dates: str | None = None) -> ScoreboardResponse:
         _validate_league(league)
         validate_scoreboard_dates(dates)
+        return self._scoreboard(league, dates, schedule_date=None)
+
+    def schedule(
+        self,
+        league: str,
+        date: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> ScoreboardResponse:
+        _validate_league(league)
+        dates = schedule_dates_to_espn(date, from_date, to_date)
+        return self._scoreboard(league, dates, schedule_date=date or _range_date(from_date, to_date))
+
+    def _scoreboard(
+        self,
+        league: str,
+        dates: str | None,
+        schedule_date: str | None,
+    ) -> ScoreboardResponse:
         params = {"dates": dates} if dates else None
         try:
             response = httpx.get(
@@ -82,10 +101,14 @@ class EspnMatchDetailClient:
                 status.HTTP_502_BAD_GATEWAY,
                 "ESPN scoreboard is temporarily unavailable",
             ) from exc
-        return normalize_espn_scoreboard(league, response.json())
+        return normalize_espn_scoreboard(league, response.json(), schedule_date=schedule_date)
 
 
-def normalize_espn_scoreboard(league: str, payload: dict[str, Any]) -> ScoreboardResponse:
+def normalize_espn_scoreboard(
+    league: str,
+    payload: dict[str, Any],
+    schedule_date: str | None = None,
+) -> ScoreboardResponse:
     events = payload.get("events")
     matches: list[ScoreboardMatch] = []
     for event in events if isinstance(events, list) else []:
@@ -102,16 +125,20 @@ def normalize_espn_scoreboard(league: str, payload: dict[str, Any]) -> Scoreboar
             ScoreboardMatch(
                 matchId=match_id,
                 league=league,
+                name=_string(event_dict.get("name")),
+                shortName=_string(event_dict.get("shortName")),
                 status=_string(status_type.get("abbreviation")) or _string(status_type.get("shortDetail")),
                 statusDescription=_string(status_type.get("detail"))
                 or _string(status_type.get("description")),
+                state=_string(status_type.get("state")),
                 kickoff=_string(competition.get("date")) or _string(event_dict.get("date")),
                 homeTeam=_team(home),
                 awayTeam=_team(away),
                 venue=_venue(competition.get("venue")),
+                detailApi=f"/api/matches/{league}/{match_id}/detail",
             )
         )
-    return ScoreboardResponse(league=league, matches=matches)
+    return ScoreboardResponse(league=league, date=schedule_date, matches=matches)
 
 
 def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) -> MatchDetail:
@@ -157,6 +184,53 @@ def validate_scoreboard_dates(dates: str | None) -> None:
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "dates must be YYYYMMDD or YYYYMMDD-YYYYMMDD",
         )
+
+
+def schedule_dates_to_espn(
+    date: str | None,
+    from_date: str | None,
+    to_date: str | None,
+) -> str | None:
+    has_single = date is not None
+    has_range = from_date is not None or to_date is not None
+    if has_single and has_range:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Use either date or from/to, not both",
+        )
+    if has_single:
+        return _iso_date_to_espn(date, "date")
+    if from_date is None and to_date is None:
+        return None
+    if from_date is None or to_date is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Both from and to are required for a date range",
+        )
+    return f"{_iso_date_to_espn(from_date, 'from')}-{_iso_date_to_espn(to_date, 'to')}"
+
+
+def _iso_date_to_espn(value: str, field: str) -> str:
+    parts = value.split("-")
+    valid = (
+        len(parts) == 3
+        and len(parts[0]) == 4
+        and len(parts[1]) == 2
+        and len(parts[2]) == 2
+        and all(part.isdigit() for part in parts)
+    )
+    if not valid:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"{field} must be YYYY-MM-DD",
+        )
+    return "".join(parts)
+
+
+def _range_date(from_date: str | None, to_date: str | None) -> str | None:
+    if from_date is None and to_date is None:
+        return None
+    return f"{from_date}/{to_date}"
 
 
 def _competition(payload: dict[str, Any]) -> dict[str, Any]:

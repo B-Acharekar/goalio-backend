@@ -58,58 +58,77 @@ class MemoryFootball:
 
 
 class MemoryMatchDetail:
+    def schedule(
+        self,
+        league: str,
+        date: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ):
+        from app.services.match_detail import normalize_espn_scoreboard, schedule_dates_to_espn
+
+        schedule_dates_to_espn(date, from_date, to_date)
+        return normalize_espn_scoreboard(
+            league,
+            self._scoreboard_payload(),
+            schedule_date=date or (f"{from_date}/{to_date}" if from_date and to_date else None),
+        )
+
     def scoreboard(self, league: str, dates: str | None = None):
         from app.services.match_detail import normalize_espn_scoreboard
 
-        return normalize_espn_scoreboard(
-            league,
-            {
-                "events": [
-                    {
-                        "id": "760422",
-                        "date": "2026-06-14T17:00Z",
-                        "competitions": [
-                            {
-                                "date": "2026-06-14T17:00Z",
-                                "status": {
-                                    "type": {
-                                        "abbreviation": "FT",
-                                        "detail": "Full Time",
-                                        "description": "Full Time",
-                                    }
-                                },
-                                "venue": {
-                                    "fullName": "Goalio Stadium",
-                                    "address": {"city": "Berlin"},
-                                },
-                                "competitors": [
-                                    {
-                                        "homeAway": "home",
-                                        "score": "7",
-                                        "team": {
-                                            "id": "481",
-                                            "displayName": "Germany",
-                                            "shortDisplayName": "Germany",
-                                            "abbreviation": "GER",
-                                        },
+        return normalize_espn_scoreboard(league, self._scoreboard_payload())
+
+    def _scoreboard_payload(self):
+        return {
+            "events": [
+                {
+                    "id": "760422",
+                    "name": "Germany vs Curacao",
+                    "shortName": "GER v CUW",
+                    "date": "2026-06-14T17:00Z",
+                    "competitions": [
+                        {
+                            "date": "2026-06-14T17:00Z",
+                            "status": {
+                                "type": {
+                                    "abbreviation": "FT",
+                                    "detail": "Full Time",
+                                    "description": "Full Time",
+                                    "state": "post",
+                                }
+                            },
+                            "venue": {
+                                "fullName": "Goalio Stadium",
+                                "address": {"city": "Berlin"},
+                            },
+                            "competitors": [
+                                {
+                                    "homeAway": "home",
+                                    "score": "7",
+                                    "team": {
+                                        "id": "481",
+                                        "displayName": "Germany",
+                                        "shortDisplayName": "Germany",
+                                        "abbreviation": "GER",
                                     },
-                                    {
-                                        "homeAway": "away",
-                                        "score": "1",
-                                        "team": {
-                                            "id": "11678",
-                                            "displayName": "Curacao",
-                                            "shortDisplayName": "Curacao",
-                                            "abbreviation": "CUW",
-                                        },
+                                },
+                                {
+                                    "homeAway": "away",
+                                    "score": "1",
+                                    "team": {
+                                        "id": "11678",
+                                        "displayName": "Curacao",
+                                        "shortDisplayName": "Curacao",
+                                        "abbreviation": "CUW",
                                     },
-                                ],
-                            }
-                        ],
-                    }
-                ]
-            },
-        )
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
 
     def detail(self, league: str, event_id: str):
         from app.services.match_detail import normalize_espn_summary
@@ -322,15 +341,36 @@ def test_match_scoreboard_returns_event_ids_for_detail():
     body = response.json()
     assert body["league"] == "fifa.world"
     assert body["matches"][0]["matchId"] == "760422"
+    assert body["matches"][0]["name"] == "Germany vs Curacao"
+    assert body["matches"][0]["shortName"] == "GER v CUW"
     assert body["matches"][0]["homeTeam"]["name"] == "Germany"
     assert body["matches"][0]["awayTeam"]["score"] == 1
     assert body["matches"][0]["statusDescription"] == "Full Time"
+    assert body["matches"][0]["state"] == "post"
+    assert body["matches"][0]["detailApi"] == "/api/matches/fifa.world/760422/detail"
 
 
 def test_match_scoreboard_rejects_malformed_dates():
     response = client.get("/api/v1/matches/fifa.world/scoreboard?dates=2026069")
     assert response.status_code == 422
     assert response.json()["detail"] == "dates must be YYYYMMDD or YYYYMMDD-YYYYMMDD"
+
+
+def test_match_schedule_accepts_iso_date_and_range():
+    single = client.get("/api/v1/matches/fifa.world/schedule?date=2026-06-14")
+    assert single.status_code == 200
+    assert single.json()["date"] == "2026-06-14"
+    assert single.json()["matches"][0]["matchId"] == "760422"
+
+    date_range = client.get("/api/v1/matches/fifa.world/schedule?from=2026-06-01&to=2026-06-30")
+    assert date_range.status_code == 200
+    assert date_range.json()["date"] == "2026-06-01/2026-06-30"
+
+
+def test_match_schedule_rejects_bad_iso_date():
+    response = client.get("/api/v1/matches/fifa.world/schedule?date=20260614")
+    assert response.status_code == 422
+    assert response.json()["detail"] == "date must be YYYY-MM-DD"
 
 
 def test_health_check():

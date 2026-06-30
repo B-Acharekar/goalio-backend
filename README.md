@@ -121,18 +121,22 @@ Supported ESPN league codes:
 
 | Endpoint URL | Request example | Response example |
 | --- | --- | --- |
-| `GET /api/v1/matches/{league}/scoreboard` | `GET /api/v1/matches/fifa.world/scoreboard` | `{"league":"fifa.world","matches":[{"matchId":"760422","league":"fifa.world","status":"FT","statusDescription":"Full Time","kickoff":"2026-06-14T17:00Z","homeTeam":{"id":"481","name":"Germany","shortName":"Germany","abbreviation":"GER","logo":"https://...","score":7},"awayTeam":{"id":"11678","name":"Curacao","shortName":"Curacao","abbreviation":"CUW","logo":"https://...","score":1},"venue":{"name":"venue name","city":"city"}}]}` |
+| `GET /api/v1/matches/{league}/schedule` | `GET /api/v1/matches/eng.1/schedule?date=2026-08-15` | `{"league":"eng.1","date":"2026-08-15","matches":[{"matchId":"123456","league":"eng.1","name":"Arsenal vs Chelsea","shortName":"ARS v CHE","status":"Scheduled","statusDescription":"Scheduled","state":"pre","kickoff":"2026-08-15T14:00Z","homeTeam":{"id":"359","name":"Arsenal","shortName":"Arsenal","abbreviation":"ARS","logo":"https://...","score":null},"awayTeam":{"id":"363","name":"Chelsea","shortName":"Chelsea","abbreviation":"CHE","logo":"https://...","score":null},"venue":{"name":"Emirates Stadium","city":"London"},"detailApi":"/api/matches/eng.1/123456/detail"}]}` |
+| `GET /api/v1/matches/{league}/schedule` | `GET /api/v1/matches/eng.1/schedule?from=2026-08-01&to=2026-08-31` | Same response shape, with `date` set to `2026-08-01/2026-08-31`. |
+| `GET /api/v1/matches/{league}/scoreboard` | `GET /api/v1/matches/fifa.world/scoreboard` | Lower-level ESPN-style scoreboard wrapper. Prefer `/schedule` for app code. |
 | `GET /api/v1/matches/{league}/scoreboard` | `GET /api/v1/matches/eng.1/scoreboard?dates=20260614` | Same response shape, filtered by ESPN's `dates` parameter when ESPN supports it. |
 | `GET /api/v1/matches/{league}/{eventId}/detail` | `GET /api/v1/matches/fifa.world/760422/detail` | See normalized response below. |
 | `GET /api/matches/{league}/{eventId}/detail` | `GET /api/matches/eng.1/401695632/detail` | Compatibility alias for the same endpoint. Prefer `/api/v1/...` in app code. |
 
 App flow:
 
-1. Call scoreboard, for example `GET /api/v1/matches/eng.1/scoreboard`.
+1. Call schedule, for example `GET /api/v1/matches/eng.1/schedule?date=2026-08-15`.
 2. Render match cards using `matches[].matchId`, score, teams, kickoff, and status.
 3. When a user taps a match, call `GET /api/v1/matches/eng.1/{matchId}/detail`.
 
-`dates` must be `YYYYMMDD` or `YYYYMMDD-YYYYMMDD`. For example, use `20260609`, not `2026069`.
+For `/schedule`, use `date=YYYY-MM-DD` or `from=YYYY-MM-DD&to=YYYY-MM-DD`.
+For lower-level `/scoreboard`, `dates` must be `YYYYMMDD` or `YYYYMMDD-YYYYMMDD`.
+For example, use `20260609`, not `2026069`.
 
 Normalized match detail response:
 

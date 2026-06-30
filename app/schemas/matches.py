@@ -66,14 +66,19 @@ class MatchDetail(BaseModel):
 class ScoreboardMatch(BaseModel):
     matchId: str
     league: str
+    name: str | None = None
+    shortName: str | None = None
     status: str | None = None
     statusDescription: str | None = None
+    state: str | None = None
     kickoff: str | None = None
     homeTeam: MatchTeam | None = None
     awayTeam: MatchTeam | None = None
     venue: MatchVenue | None = None
+    detailApi: str
 
 
 class ScoreboardResponse(BaseModel):
     league: str
+    date: str | None = None
     matches: list[ScoreboardMatch] = Field(default_factory=list)
