@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+import time
 from typing import Any, Protocol
 
 import httpx
@@ -73,7 +74,12 @@ class ApiFootballError(RuntimeError):
 
 
 class ApiFootballClient:
-    def __init__(self, api_key: str, timeout_seconds: float = 20.0):
+    def __init__(
+        self,
+        api_key: str,
+        timeout_seconds: float = 20.0,
+        request_interval_seconds: float = 6.2,
+    ):
         if not api_key.strip():
             raise ValueError("API_FOOTBALL_KEY is required")
         self._client = httpx.Client(
@@ -81,12 +87,26 @@ class ApiFootballClient:
             headers={"x-apisports-key": api_key.strip()},
             timeout=timeout_seconds,
         )
+        self._request_interval_seconds = max(0.0, request_interval_seconds)
+        self._last_request_at = 0.0
 
     def close(self) -> None:
         self._client.close()
 
     def _get(self, path: str, params: dict[str, int]) -> list[dict[str, Any]]:
-        response = self._client.get(path, params=params)
+        response = None
+        for attempt in range(2):
+            elapsed = time.monotonic() - self._last_request_at
+            wait_seconds = self._request_interval_seconds - elapsed
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+            response = self._client.get(path, params=params)
+            self._last_request_at = time.monotonic()
+            if response.status_code != 429 or attempt == 1:
+                break
+            retry_after = float(response.headers.get("Retry-After", "60"))
+            time.sleep(max(60.0, retry_after))
+        assert response is not None
         response.raise_for_status()
         payload = response.json()
         errors = payload.get("errors")

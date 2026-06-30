@@ -9,7 +9,7 @@ from app.api.dependencies import (
     get_profile_repository,
 )
 from app.main import app
-from app.schemas.football import PlayerResult, TeamResult
+from app.schemas.football import PlayerPage, PlayerResult, TeamPage, TeamResult
 from app.schemas.profile import ProfileUpsert, UserProfile
 
 
@@ -37,6 +37,12 @@ class MemoryProfiles:
 
 
 class MemoryFootball:
+    def list_teams(self, limit: int, cursor: str | None) -> TeamPage:
+        return TeamPage(items=[TeamResult(id="6", name="Brazil", shortName="BRA")])
+
+    def list_players(self, limit: int, cursor: str | None) -> PlayerPage:
+        return PlayerPage(items=[PlayerResult(id="154", name="Lionel Messi", team="Argentina")])
+
     def search_teams(self, query: str) -> list[TeamResult]:
         teams = [TeamResult(id="6", name="Brazil", shortName="BRA")]
         return [team for team in teams if query.casefold() in team.name.casefold()]
@@ -76,6 +82,14 @@ def test_profile_round_trip_and_personalized_home():
 
 
 def test_search_teams_and_players():
+    all_teams = client.get("/api/v1/football/teams")
+    assert all_teams.status_code == 200
+    assert all_teams.json()["items"][0]["name"] == "Brazil"
+
+    all_players = client.get("/api/v1/football/players")
+    assert all_players.status_code == 200
+    assert all_players.json()["items"][0]["name"] == "Lionel Messi"
+
     teams = client.get("/api/v1/football/teams/search?q=brazil")
     assert teams.status_code == 200
     assert [item["name"] for item in teams.json()] == ["Brazil"]

@@ -4,7 +4,7 @@ from typing import Protocol
 from google.cloud.firestore_v1 import Client
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from app.schemas.football import PlayerResult, TeamResult
+from app.schemas.football import PlayerPage, PlayerResult, TeamPage, TeamResult
 
 
 def normalize_search(value: str) -> str:
@@ -22,6 +22,10 @@ def search_terms(value: str) -> list[str]:
 
 
 class FootballRepository(Protocol):
+    def list_teams(self, limit: int, cursor: str | None) -> TeamPage: ...
+
+    def list_players(self, limit: int, cursor: str | None) -> PlayerPage: ...
+
     def search_teams(self, query: str) -> list[TeamResult]: ...
 
     def search_players(self, query: str) -> list[PlayerResult]: ...
@@ -30,6 +34,41 @@ class FootballRepository(Protocol):
 class FirestoreFootballRepository:
     def __init__(self, client: Client):
         self.client = client
+
+    def _active_page(self, collection_name: str, limit: int, cursor: str | None):
+        collection = self.client.collection(collection_name)
+        query = collection.where(filter=FieldFilter("active", "==", True)).order_by("__name__")
+        if cursor:
+            cursor_snapshot = collection.document(cursor).get()
+            if cursor_snapshot.exists:
+                query = query.start_after(cursor_snapshot)
+        snapshots = list(query.limit(limit + 1).stream())
+        has_more = len(snapshots) > limit
+        page = snapshots[:limit]
+        return page, page[-1].id if has_more and page else None
+
+    def list_teams(self, limit: int, cursor: str | None) -> TeamPage:
+        snapshots, next_cursor = self._active_page("teams", limit, cursor)
+        return TeamPage(
+            items=[
+                TeamResult(
+                    id=str(data["id"]),
+                    name=data["name"],
+                    shortName=data.get("code") or data["name"][:3].upper(),
+                    imageUrl=data.get("logo"),
+                )
+                for snapshot in snapshots
+                for data in [snapshot.to_dict()]
+            ],
+            nextCursor=next_cursor,
+        )
+
+    def list_players(self, limit: int, cursor: str | None) -> PlayerPage:
+        snapshots, next_cursor = self._active_page("players", limit, cursor)
+        return PlayerPage(
+            items=self._player_results([snapshot.to_dict() for snapshot in snapshots]),
+            nextCursor=next_cursor,
+        )
 
     def search_teams(self, query: str) -> list[TeamResult]:
         normalized = normalize_search(query)
@@ -67,7 +106,9 @@ class FirestoreFootballRepository:
                 collection.where(filter=FieldFilter("active", "==", True)).limit(20).stream()
             )
 
-        player_data = [snapshot.to_dict() for snapshot in snapshots]
+        return self._player_results([snapshot.to_dict() for snapshot in snapshots])
+
+    def _player_results(self, player_data: list[dict]) -> list[PlayerResult]:
         team_ids = {
             int(team_id)
             for player in player_data

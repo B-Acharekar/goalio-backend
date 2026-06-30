@@ -13,3 +13,13 @@ class PlayerResult(BaseModel):
     name: str
     team: str
     imageUrl: str | None = None
+
+
+class TeamPage(BaseModel):
+    items: list[TeamResult]
+    nextCursor: str | None = None
+
+
+class PlayerPage(BaseModel):
+    items: list[PlayerResult]
+    nextCursor: str | None = None

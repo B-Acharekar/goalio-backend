@@ -58,7 +58,10 @@ def main() -> None:
         if args.competition
         else list(COMPETITIONS)
     )
-    api = ApiFootballClient(api_key)
+    api = ApiFootballClient(
+        api_key,
+        request_interval_seconds=settings.football_request_interval_seconds,
+    )
     try:
         store = FirestoreMasterDataStore(get_firestore_client())
         sync = MasterDataSyncService(api, store)

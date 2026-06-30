@@ -77,7 +77,8 @@ python -m app.jobs.sync_master_data --season 2026 --due-only --max-requests 95
 Suggested UTC schedule: `0 1 * * *`. The job spends six requests checking the competition season
 dates, starts each competition seven days before its season, and resumes from the next team on
 the following day when the request budget is exhausted. It keeps trying through fourteen days
-after the published start date.
+after the published start date. Requests are spaced by `FOOTBALL_REQUEST_INTERVAL_SECONDS=6.2`
+to stay below the free plan's 10-request-per-minute limit, and HTTP 429 responses are retried once.
 
 For an immediate manual import, omit `--due-only`:
 
