@@ -61,3 +61,19 @@ class MatchDetail(BaseModel):
     playerLeaders: list[PlayerLeaderCategory] = Field(default_factory=list)
     events: list[MatchEvent] = Field(default_factory=list)
     summary: str | None = None
+
+
+class ScoreboardMatch(BaseModel):
+    matchId: str
+    league: str
+    status: str | None = None
+    statusDescription: str | None = None
+    kickoff: str | None = None
+    homeTeam: MatchTeam | None = None
+    awayTeam: MatchTeam | None = None
+    venue: MatchVenue | None = None
+
+
+class ScoreboardResponse(BaseModel):
+    league: str
+    matches: list[ScoreboardMatch] = Field(default_factory=list)

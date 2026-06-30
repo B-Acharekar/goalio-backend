@@ -58,6 +58,59 @@ class MemoryFootball:
 
 
 class MemoryMatchDetail:
+    def scoreboard(self, league: str, dates: str | None = None):
+        from app.services.match_detail import normalize_espn_scoreboard
+
+        return normalize_espn_scoreboard(
+            league,
+            {
+                "events": [
+                    {
+                        "id": "760422",
+                        "date": "2026-06-14T17:00Z",
+                        "competitions": [
+                            {
+                                "date": "2026-06-14T17:00Z",
+                                "status": {
+                                    "type": {
+                                        "abbreviation": "FT",
+                                        "detail": "Full Time",
+                                        "description": "Full Time",
+                                    }
+                                },
+                                "venue": {
+                                    "fullName": "Goalio Stadium",
+                                    "address": {"city": "Berlin"},
+                                },
+                                "competitors": [
+                                    {
+                                        "homeAway": "home",
+                                        "score": "7",
+                                        "team": {
+                                            "id": "481",
+                                            "displayName": "Germany",
+                                            "shortDisplayName": "Germany",
+                                            "abbreviation": "GER",
+                                        },
+                                    },
+                                    {
+                                        "homeAway": "away",
+                                        "score": "1",
+                                        "team": {
+                                            "id": "11678",
+                                            "displayName": "Curacao",
+                                            "shortDisplayName": "Curacao",
+                                            "abbreviation": "CUW",
+                                        },
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
     def detail(self, league: str, event_id: str):
         from app.services.match_detail import normalize_espn_summary
 
@@ -261,6 +314,17 @@ def test_match_detail_normalization():
     assert body["playerLeaders"][0]["players"][0]["espnUrl"].endswith("kai-havertz")
     assert body["events"][0]["minute"] == "38'"
     assert body["summary"] == "Germany won comfortably."
+
+
+def test_match_scoreboard_returns_event_ids_for_detail():
+    response = client.get("/api/v1/matches/fifa.world/scoreboard")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["league"] == "fifa.world"
+    assert body["matches"][0]["matchId"] == "760422"
+    assert body["matches"][0]["homeTeam"]["name"] == "Germany"
+    assert body["matches"][0]["awayTeam"]["score"] == 1
+    assert body["matches"][0]["statusDescription"] == "Full Time"
 
 
 def test_health_check():

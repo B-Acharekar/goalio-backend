@@ -11,6 +11,8 @@ from app.schemas.matches import (
     MatchTeam,
     MatchVenue,
     PlayerLeaderCategory,
+    ScoreboardMatch,
+    ScoreboardResponse,
     TeamStats,
 )
 
@@ -35,11 +37,7 @@ class EspnMatchDetailClient:
         self.timeout = timeout
 
     def detail(self, league: str, event_id: str) -> MatchDetail:
-        if league not in SUPPORTED_ESPN_LEAGUES:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"Unsupported ESPN soccer league: {league}",
-            )
+        _validate_league(league)
         try:
             response = httpx.get(
                 f"{self.base_url}/{league}/summary",
@@ -60,6 +58,59 @@ class EspnMatchDetailClient:
                 "ESPN match summary is temporarily unavailable",
             ) from exc
         return normalize_espn_summary(league, event_id, response.json())
+
+    def scoreboard(self, league: str, dates: str | None = None) -> ScoreboardResponse:
+        _validate_league(league)
+        params = {"dates": dates} if dates else None
+        try:
+            response = httpx.get(
+                f"{self.base_url}/{league}/scoreboard",
+                params=params,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == status.HTTP_404_NOT_FOUND:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "League scoreboard not found") from exc
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "ESPN scoreboard is temporarily unavailable",
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "ESPN scoreboard is temporarily unavailable",
+            ) from exc
+        return normalize_espn_scoreboard(league, response.json())
+
+
+def normalize_espn_scoreboard(league: str, payload: dict[str, Any]) -> ScoreboardResponse:
+    events = payload.get("events")
+    matches: list[ScoreboardMatch] = []
+    for event in events if isinstance(events, list) else []:
+        event_dict = _as_dict(event)
+        competition = _scoreboard_competition(event_dict)
+        competitors = competition.get("competitors") or []
+        home = _find_competitor(competitors, "home") or (competitors[0] if competitors else None)
+        away = _find_competitor(competitors, "away") or (competitors[1] if len(competitors) > 1 else None)
+        status_type = _as_dict(_as_dict(competition.get("status") or event_dict.get("status")).get("type"))
+        match_id = _string(event_dict.get("id")) or _string(competition.get("id"))
+        if not match_id:
+            continue
+        matches.append(
+            ScoreboardMatch(
+                matchId=match_id,
+                league=league,
+                status=_string(status_type.get("abbreviation")) or _string(status_type.get("shortDetail")),
+                statusDescription=_string(status_type.get("detail"))
+                or _string(status_type.get("description")),
+                kickoff=_string(competition.get("date")) or _string(event_dict.get("date")),
+                homeTeam=_team(home),
+                awayTeam=_team(away),
+                venue=_venue(competition.get("venue")),
+            )
+        )
+    return ScoreboardResponse(league=league, matches=matches)
 
 
 def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) -> MatchDetail:
@@ -87,9 +138,24 @@ def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) 
     )
 
 
+def _validate_league(league: str) -> None:
+    if league not in SUPPORTED_ESPN_LEAGUES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Unsupported ESPN soccer league: {league}",
+        )
+
+
 def _competition(payload: dict[str, Any]) -> dict[str, Any]:
     header = _as_dict(payload.get("header"))
     competitions = header.get("competitions")
+    if isinstance(competitions, list) and competitions:
+        return _as_dict(competitions[0])
+    return {}
+
+
+def _scoreboard_competition(event: dict[str, Any]) -> dict[str, Any]:
+    competitions = event.get("competitions")
     if isinstance(competitions, list) and competitions:
         return _as_dict(competitions[0])
     return {}

@@ -121,8 +121,16 @@ Supported ESPN league codes:
 
 | Endpoint URL | Request example | Response example |
 | --- | --- | --- |
+| `GET /api/v1/matches/{league}/scoreboard` | `GET /api/v1/matches/fifa.world/scoreboard` | `{"league":"fifa.world","matches":[{"matchId":"760422","league":"fifa.world","status":"FT","statusDescription":"Full Time","kickoff":"2026-06-14T17:00Z","homeTeam":{"id":"481","name":"Germany","shortName":"Germany","abbreviation":"GER","logo":"https://...","score":7},"awayTeam":{"id":"11678","name":"Curacao","shortName":"Curacao","abbreviation":"CUW","logo":"https://...","score":1},"venue":{"name":"venue name","city":"city"}}]}` |
+| `GET /api/v1/matches/{league}/scoreboard` | `GET /api/v1/matches/eng.1/scoreboard?dates=20260614` | Same response shape, filtered by ESPN's `dates` parameter when ESPN supports it. |
 | `GET /api/v1/matches/{league}/{eventId}/detail` | `GET /api/v1/matches/fifa.world/760422/detail` | See normalized response below. |
 | `GET /api/matches/{league}/{eventId}/detail` | `GET /api/matches/eng.1/401695632/detail` | Compatibility alias for the same endpoint. Prefer `/api/v1/...` in app code. |
+
+App flow:
+
+1. Call scoreboard, for example `GET /api/v1/matches/eng.1/scoreboard`.
+2. Render match cards using `matches[].matchId`, score, teams, kickoff, and status.
+3. When a user taps a match, call `GET /api/v1/matches/eng.1/{matchId}/detail`.
 
 Normalized match detail response:
 
