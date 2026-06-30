@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Query
 
-from app.api.dependencies import CurrentUser, get_current_user
+from app.api.dependencies import CurrentUser, get_current_user, get_football_repository
+from app.repositories.football import FootballRepository
 from app.schemas.football import PlayerResult, TeamResult
-from app.services.football import search_players, search_teams
 
 
 router = APIRouter(
@@ -16,13 +16,15 @@ router = APIRouter(
 def teams_search(
     q: str = Query(default="", max_length=80),
     _: CurrentUser = Depends(get_current_user),
+    repository: FootballRepository = Depends(get_football_repository),
 ) -> list[TeamResult]:
-    return search_teams(q)
+    return repository.search_teams(q)
 
 
 @router.get("/players/search", response_model=list[PlayerResult])
 def players_search(
     q: str = Query(default="", max_length=80),
     _: CurrentUser = Depends(get_current_user),
+    repository: FootballRepository = Depends(get_football_repository),
 ) -> list[PlayerResult]:
-    return search_players(q)
+    return repository.search_players(q)

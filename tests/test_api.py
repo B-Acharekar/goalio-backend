@@ -2,8 +2,14 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import CurrentUser, get_current_user, get_profile_repository
+from app.api.dependencies import (
+    CurrentUser,
+    get_current_user,
+    get_football_repository,
+    get_profile_repository,
+)
 from app.main import app
+from app.schemas.football import PlayerResult, TeamResult
 from app.schemas.profile import ProfileUpsert, UserProfile
 
 
@@ -30,9 +36,20 @@ class MemoryProfiles:
         return all(profile.username != username or profile.userId == uid for profile in self.profiles.values())
 
 
+class MemoryFootball:
+    def search_teams(self, query: str) -> list[TeamResult]:
+        teams = [TeamResult(id="6", name="Brazil", shortName="BRA")]
+        return [team for team in teams if query.casefold() in team.name.casefold()]
+
+    def search_players(self, query: str) -> list[PlayerResult]:
+        players = [PlayerResult(id="154", name="Lionel Messi", team="Argentina")]
+        return [player for player in players if query.casefold() in player.name.casefold()]
+
+
 repository = MemoryProfiles()
 app.dependency_overrides[get_current_user] = lambda: CurrentUser("test-user")
 app.dependency_overrides[get_profile_repository] = lambda: repository
+app.dependency_overrides[get_football_repository] = lambda: MemoryFootball()
 client = TestClient(app)
 
 
