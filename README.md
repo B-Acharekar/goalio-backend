@@ -81,11 +81,122 @@ boundary. The API-Football free plan used during development rejected 2026 and a
 
 ## Football catalog endpoints
 
-```text
-GET /api/v1/football/teams?limit=100&cursor=...
-GET /api/v1/football/players?limit=100&cursor=...
-GET /api/v1/football/teams/search?q=arsenal
-GET /api/v1/football/players/search?q=messi
+All catalog endpoints require:
+
+```http
+Authorization: Bearer <Firebase ID token>
+```
+
+Catalog responses are paginated in visible UI chunks. The default page size is `6`; the max
+accepted `limit` is `20`. For "load more", send the previous response's `nextCursor`.
+
+| Endpoint URL | Request example | Response example |
+| --- | --- | --- |
+| `GET /api/v1/football/teams` | `GET /api/v1/football/teams?limit=6` | `{"items":[{"id":"espn_eng.1_359","name":"Arsenal","shortName":"Arsenal","competitionIds":[39],"imageUrl":"https://..."}],"nextCursor":"espn_eng.1_359"}` |
+| `GET /api/v1/football/teams` | `GET /api/v1/football/teams?limit=6&cursor=espn_eng.1_359` | `{"items":[{"id":"espn_eng.1_363","name":"Chelsea","shortName":"Chelsea","competitionIds":[39],"imageUrl":"https://..."}],"nextCursor":"espn_eng.1_363"}` |
+| `GET /api/v1/football/players` | `GET /api/v1/football/players?limit=6` | `{"items":[{"id":"espn_231182","name":"Kai Havertz","team":"Arsenal, Germany","competitionIds":[1,39],"imageUrl":"https://..."}],"nextCursor":"espn_231182"}` |
+| `GET /api/v1/football/players` | `GET /api/v1/football/players?limit=6&cursor=espn_231182` | `{"items":[{"id":"espn_158023","name":"Mohamed Salah","team":"Liverpool, Egypt","competitionIds":[39],"imageUrl":"https://..."}],"nextCursor":"espn_158023"}` |
+| `GET /api/v1/football/teams/search` | `GET /api/v1/football/teams/search?q=arsenal&limit=6` | `{"items":[{"id":"espn_eng.1_359","name":"Arsenal","shortName":"Arsenal","competitionIds":[39],"imageUrl":"https://..."}],"nextCursor":null}` |
+| `GET /api/v1/football/players/search` | `GET /api/v1/football/players/search?q=messi&limit=6` | `{"items":[{"id":"espn_45843","name":"Lionel Messi","team":"Argentina","competitionIds":[1],"imageUrl":"https://..."}],"nextCursor":null}` |
+
+## Match detail endpoint
+
+The match detail endpoint uses ESPN's public `summary` JSON live and normalizes it for the app.
+It does **not** write to Firebase yet. Later, Firebase caching/storage can be added behind the
+same response contract.
+
+Supported ESPN league codes:
+
+| League | Code |
+| --- | --- |
+| World Cup | `fifa.world` |
+| EPL | `eng.1` |
+| LaLiga | `esp.1` |
+| Serie A | `ita.1` |
+| Bundesliga | `ger.1` |
+| Ligue 1 | `fra.1` |
+| MLS | `usa.1` |
+| Champions League | `uefa.champions` |
+| Europa League | `uefa.europa` |
+
+| Endpoint URL | Request example | Response example |
+| --- | --- | --- |
+| `GET /api/v1/matches/{league}/{eventId}/detail` | `GET /api/v1/matches/fifa.world/760422/detail` | See normalized response below. |
+| `GET /api/matches/{league}/{eventId}/detail` | `GET /api/matches/eng.1/401695632/detail` | Compatibility alias for the same endpoint. Prefer `/api/v1/...` in app code. |
+
+Normalized match detail response:
+
+```json
+{
+  "matchId": "760422",
+  "league": "fifa.world",
+  "status": "FT",
+  "statusDescription": "Full Time",
+  "kickoff": "2026-06-14T17:00Z",
+  "homeTeam": {
+    "id": "481",
+    "name": "Germany",
+    "shortName": "Germany",
+    "abbreviation": "GER",
+    "logo": "https://...",
+    "score": 7
+  },
+  "awayTeam": {
+    "id": "11678",
+    "name": "Curacao",
+    "shortName": "Curacao",
+    "abbreviation": "CUW",
+    "logo": "https://...",
+    "score": 1
+  },
+  "venue": {
+    "name": "venue name",
+    "city": "city"
+  },
+  "teamStats": [
+    {
+      "teamId": "481",
+      "stats": [
+        {
+          "name": "possessionPct",
+          "label": "Possession",
+          "value": "65%"
+        }
+      ]
+    }
+  ],
+  "playerLeaders": [
+    {
+      "category": "Shots",
+      "players": [
+        {
+          "id": "231182",
+          "name": "Kai Havertz",
+          "position": "Forward",
+          "jersey": "7",
+          "espnUrl": "https://www.espn.com/soccer/player/_/id/231182/kai-havertz",
+          "mainStat": "4",
+          "stats": [
+            {
+              "name": "totalShots",
+              "label": "Shots",
+              "value": "4"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "minute": "38'",
+      "type": "Goal - Header",
+      "text": "Nico Schlotterbeck Goal - Header",
+      "team": "Germany"
+    }
+  ],
+  "summary": "Match article/story text from ESPN"
+}
 ```
 
 ## Test protected routes in Swagger
