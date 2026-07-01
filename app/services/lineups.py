@@ -7,7 +7,6 @@ import json
 import logging
 import re
 from typing import Protocol
-from urllib.parse import quote_plus
 
 from fastapi import HTTPException
 from google.cloud.firestore_v1 import Client
@@ -21,6 +20,8 @@ from app.schemas.lineups import (
 from app.schemas.matches import LineupPlayer, MatchDetail, MatchTeam, TeamLineup
 from app.services.match_detail import EspnMatchDetailClient
 from app.core.config import get_settings
+from app.services.lineup_providers.base import MatchMeta
+from app.services.lineup_providers.thesportsdb import TheSportsDbProvider
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,8 @@ FORMATION_COORDINATES = {
     "3-4-3": [(50, 92), (28, 74), (50, 74), (72, 74), (18, 55), (39, 55), (61, 55), (82, 55), (25, 34), (50, 34), (75, 34)],
     "4-1-4-1": [(50, 92), (18, 74), (39, 74), (61, 74), (82, 74), (50, 62), (18, 48), (39, 48), (61, 48), (82, 48), (50, 30)],
     "5-3-2": [(50, 92), (12, 74), (32, 74), (50, 74), (68, 74), (88, 74), (28, 55), (50, 55), (72, 55), (38, 34), (62, 34)],
+    "4-5-1": [(50, 92), (18, 74), (39, 74), (61, 74), (82, 74), (12, 53), (31, 53), (50, 53), (69, 53), (88, 53), (50, 30)],
+    "5-4-1": [(50, 92), (12, 74), (32, 74), (50, 74), (68, 74), (88, 74), (18, 53), (39, 53), (61, 53), (82, 53), (50, 30)],
 }
 
 
@@ -42,29 +45,10 @@ class CachedLineup:
     content_hash: str | None = None
 
 
-@dataclass(frozen=True)
-class LineupSourceResolver:
-    event_id: str
-    home_team: str
-    away_team: str
-    league: str
-
-    def resolve(self) -> dict[str, str]:
-        query = f"{self.home_team} vs {self.away_team} lineups football"
-        yahoo_query = f"site:sports.yahoo.com {self.home_team} vs {self.away_team} lineups"
-        return {
-            "espnSummaryUrl": f"https://site.api.espn.com/apis/site/v2/sports/soccer/{self.league}/summary?event={quote_plus(self.event_id)}",
-            "googleSearchUrl": f"https://www.google.com/search?q={quote_plus(query)}",
-            "googleSportsUrl": "",
-            "yahooSearchUrl": f"https://search.yahoo.com/search?p={quote_plus(yahoo_query)}",
-            "yahooMatchUrl": "",
-        }
-
-
 class LineupStore(Protocol):
     def get(self, event_id: str) -> CachedLineup | None: ...
 
-    def write(self, response: MatchLineupResponse, attempts: dict[str, dict], content_hash: str) -> None: ...
+    def write(self, response: MatchLineupResponse, attempts: list[dict], content_hash: str) -> None: ...
 
 
 class FirestoreLineupStore:
@@ -85,7 +69,7 @@ class FirestoreLineupStore:
         except (TypeError, ValueError):
             return None
 
-    def write(self, response: MatchLineupResponse, attempts: dict[str, dict], content_hash: str) -> None:
+    def write(self, response: MatchLineupResponse, attempts: list[dict], content_hash: str) -> None:
         payload = response.model_dump(mode="json", exclude={"fetchAttempts"})
         self._ref(response.eventId).set(
             {
@@ -98,80 +82,57 @@ class FirestoreLineupStore:
 
 
 class LineupService:
-    def __init__(self, client: EspnMatchDetailClient, store: LineupStore):
+    def __init__(self, client: EspnMatchDetailClient, store: LineupStore, thesportsdb: TheSportsDbProvider | None = None):
         self.client = client
         self.store = store
+        self.thesportsdb = thesportsdb
+        self.last_debug: dict = {}
 
     def get(self, league: str, event_id: str, force: bool = False) -> MatchLineupResponse:
         now = datetime.now(timezone.utc)
         cached = self.store.get(event_id)
-        if cached and not force and _cache_is_fresh(cached.response, now):
-            return cached.response
-
-        attempts = {name: {"status": "skipped", "url": None, "reason": None, "rawFound": False} for name in ("espn", "google", "yahoo")}
+        attempts: list[dict] = []
         try:
             detail = self.client.espn_detail(league, event_id)
-        except (HTTPException, Exception):
-            attempts["espn"].update(status="failed_error", reason="summary request failed")
+            attempts.append({"provider": "espn", "step": "load_match_detail", "success": True,
+                             "availableKeys": [key for key, value in detail.model_dump().items() if value not in (None, [], {})], "reason": None})
+        except Exception as exc:
+            attempts.append({"provider": "espn", "step": "load_match_detail", "success": False, "reason": str(exc)[:200]})
             if cached:
                 return cached.response.model_copy(update={"source": "cache", "isStale": True})
             return _empty_response(event_id, now)
-
+        meta = MatchMeta.from_espn(detail)
+        if cached and _response_has_players(cached.response) and not force and _cache_is_fresh(cached.response, now):
+            self.last_debug = _debug_payload(meta, cached, attempts, cached.response)
+            return cached.response
         kickoff = _parse_datetime(detail.kickoff)
-        resolved = LineupSourceResolver(
-            event_id, detail.homeTeam.shortName or detail.homeTeam.name if detail.homeTeam else "home",
-            detail.awayTeam.shortName or detail.awayTeam.name if detail.awayTeam else "away", league,
-        ).resolve()
-        attempts["espn"]["url"] = resolved["espnSummaryUrl"]
-        attempts["google"]["url"] = resolved["googleSearchUrl"]
-        attempts["yahoo"]["url"] = resolved["yahooSearchUrl"]
         final = _is_final(detail)
-        within_scrape_window = kickoff is None or kickoff - now <= timedelta(hours=24)
+        within_fetch_window = kickoff is None or kickoff - now <= timedelta(hours=24)
         lineups = detail.lineups if _has_starting_lineup(detail.lineups) else []
+        espn_lineups = lineups
         source = "espn"
-        if not lineups:
-            try:
-                lineups = self.client.espn_lineups(league, event_id)
-                attempts["espn"].update(status="success" if _has_starting_lineup(lineups) else "failed_no_lineups", rawFound=bool(lineups))
-            except Exception:
-                attempts["espn"].update(status="failed_error", reason="ESPN lineup fetch failed")
-                lineups = []
-        else:
-            attempts["espn"].update(status="success", rawFound=True)
-
-        if not _has_starting_lineup(lineups) and within_scrape_window and (not final or cached is None):
-            attempts["google"].update(status="failed_no_lineups")
-            try:
-                lineups = self.client.google_lineups(league, event_id, detail)
-                if _has_starting_lineup(lineups):
-                    attempts["google"].update(status="success", rawFound=True)
-                    source = "google"
-            except Exception:
-                attempts["google"].update(status="failed_error", reason="Google fetch or parse failed")
-                lineups = []
-
-        if not _has_starting_lineup(lineups) and within_scrape_window and (not final or cached is None):
-            attempts["yahoo"].update(status="failed_no_lineups")
-            try:
-                lineups = self.client.yahoo_lineups(league, event_id, detail)
-                if _has_starting_lineup(lineups):
-                    attempts["yahoo"].update(status="success", rawFound=True)
-                    source = "yahoo"
-            except Exception:
-                attempts["yahoo"].update(status="failed_error", reason="Yahoo discovery, fetch, or parse failed")
-                lineups = []
+        attempts.append({"provider": "espn", "step": "extract_lineup", "success": bool(lineups),
+                         "homeStarters": len(lineups[0].starters) if lineups else 0,
+                         "awayStarters": len(lineups[1].starters) if len(lineups) > 1 else 0,
+                         "reason": None if lineups else ("roster found without starter markers" if detail.lineups else "no lineup keys found")})
+        if not _has_complete_lineup(lineups) and within_fetch_window and self.thesportsdb:
+            provider_result = self.thesportsdb.fetch(meta)
+            attempts.extend(provider_result.attempts)
+            if _has_real_lineup(provider_result.lineups):
+                lineups, source = provider_result.lineups, "theSportsDb"
+            else:
+                lineups = espn_lineups
 
         if not _has_starting_lineup(lineups) and cached and _response_has_players(cached.response):
             return cached.response.model_copy(update={"source": "cache", "isStale": True})
 
-        response = _normalize_response(event_id, detail, lineups, source if _has_starting_lineup(lineups) else "generated", now)
-        if get_settings().lineup_debug:
-            response.fetchAttempts = attempts
+        response = _normalize_response(event_id, detail, lineups, source if _has_real_lineup(lineups) else "generated", now)
         if not _response_has_players(response):
-            logger.warning("LINEUP_EMPTY eventId=%s espn=%s google=%s yahoo=%s cache=%s returning=generated_not_available", event_id, attempts["espn"]["status"], attempts["google"]["status"], attempts["yahoo"]["status"], "present" if cached else "empty")
+            logger.warning("LINEUP_EMPTY eventId=%s providers=%s cache=%s returning=generated_not_available", event_id, [x.get("step") for x in attempts], "present" if cached else "empty")
         content_hash = _content_hash(response)
         if cached is None or cached.content_hash != content_hash or _refresh_changed(cached.response, response):
             self.store.write(response, attempts, content_hash)
+        self.last_debug = _debug_payload(meta, cached, attempts, response)
         return response
 
 
@@ -186,11 +147,11 @@ def _normalize_response(
     away_raw = _find_team_lineup(lineups, detail.awayTeam)
     home, home_estimated = _normalize_team(home_raw, detail.homeTeam, mirror=False)
     away, away_estimated = _normalize_team(away_raw, detail.awayTeam, mirror=True)
-    has_players = bool(home.startingXI or away.startingXI)
+    has_players = bool(home.startingXI or away.startingXI or home.bench or away.bench)
     final = _is_final(detail)
     live = _is_live(detail)
-    both_teams = bool(home.startingXI and away.startingXI)
-    status = "FINAL" if final and both_teams else "LIVE" if live and both_teams else "CONFIRMED" if both_teams else "PARTIAL" if has_players else "NOT_AVAILABLE"
+    complete = len(home.startingXI) == 11 and len(away.startingXI) == 11
+    status = "FINAL" if final and complete else "LIVE" if live and complete else "CONFIRMED" if complete else "PARTIAL" if has_players else "NOT_AVAILABLE"
     formation_status = "ESTIMATED" if has_players and (home_estimated or away_estimated) else "CONFIRMED" if has_players else "UNKNOWN"
     kickoff = _parse_datetime(detail.kickoff)
     return MatchLineupResponse(
@@ -199,7 +160,7 @@ def _normalize_response(
         source=source,
         formationStatus=formation_status,
         lastUpdated=now,
-        nextRefreshAt=_next_refresh(now, kickoff, final),
+        nextRefreshAt=_next_refresh(now, kickoff, final, has_players),
         kickoff=kickoff,
         home=home,
         away=away,
@@ -335,8 +296,16 @@ def _has_starting_lineup(lineups: list[TeamLineup]) -> bool:
     return any(lineup.starters for lineup in lineups)
 
 
+def _has_complete_lineup(lineups: list[TeamLineup]) -> bool:
+    return len([team for team in lineups if len(team.starters) >= 11]) >= 2
+
+
+def _has_real_lineup(lineups: list[TeamLineup]) -> bool:
+    return any(lineup.starters or lineup.substitutes for lineup in lineups)
+
+
 def _response_has_players(response: MatchLineupResponse) -> bool:
-    return bool(response.home.startingXI or response.away.startingXI)
+    return bool(response.home.startingXI or response.away.startingXI or response.home.bench or response.away.bench)
 
 
 def _is_live(detail: MatchDetail) -> bool:
@@ -349,9 +318,11 @@ def _is_final(detail: MatchDetail) -> bool:
     return any(item in value for item in ("full time", "final", "ft", "aet", "pens"))
 
 
-def _next_refresh(now: datetime, kickoff: datetime | None, final: bool) -> datetime | None:
-    if final:
+def _next_refresh(now: datetime, kickoff: datetime | None, final: bool, has_players: bool = False) -> datetime | None:
+    if final and has_players:
         return None
+    if final:
+        return now + timedelta(hours=1) if kickoff and now < kickoff + timedelta(hours=8) else None
     if kickoff is None:
         return now + timedelta(minutes=30)
     remaining = kickoff - now
@@ -380,6 +351,15 @@ def _content_hash(response: MatchLineupResponse) -> str:
 def _parse_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
+
+
+def _debug_payload(meta: MatchMeta, cached: CachedLineup | None, attempts: list[dict], response: MatchLineupResponse) -> dict:
+    return {"eventId": meta.event_id, "matchMeta": {"homeTeam": meta.home_team, "awayTeam": meta.away_team,
+            "kickoff": meta.kickoff.isoformat() if meta.kickoff else None, "status": meta.status},
+            "cache": {"hit": cached is not None, "usable": bool(cached and _response_has_players(cached.response)),
+                      "reason": "cached generated empty allowed to refresh" if cached and not _response_has_players(cached.response) else None},
+            "attempts": attempts, "final": {"source": response.source, "status": response.status,
+            "homeStarters": len(response.home.startingXI), "awayStarters": len(response.away.startingXI)}}
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
     except ValueError:

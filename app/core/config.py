@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:3000"
     allow_dev_auth: bool = False
     lineup_debug: bool = False
+    thesportsdb_api_key: str = "123"
+    thesportsdb_base_url: str = "https://www.thesportsdb.com"
+    thesportsdb_use_v2_fallback: bool = True
     api_football_key: str = ""
     football_season: int = 2026
     football_sync_max_requests: int = 250

@@ -122,7 +122,17 @@ class FirestoreMatchDetailStore:
         data = snapshot.to_dict() or {}
         next_refresh = data.get("_nextRefreshAt")
         if next_refresh is None:
-            return False
+            # Repair legacy live documents that were incorrectly frozen with a null refresh time.
+            state_text = f"{data.get('status', '')} {data.get('statusDescription', '')}".casefold()
+            is_live = any(value in state_text for value in ("live", "half", "in progress")) or bool(
+                re.search(r"\b\d{1,3}(?:\+\d+)?['’]", state_text)
+            )
+            if not is_live:
+                return False
+            updated_at = data.get("_updatedAt")
+            return not hasattr(updated_at, "timestamp") or (
+                datetime.now(timezone.utc).timestamp() - updated_at.timestamp() >= 120
+            )
         if hasattr(next_refresh, "timestamp"):
             return datetime.now(timezone.utc) >= next_refresh
         parsed = _parse_datetime(_string(next_refresh))
@@ -135,6 +145,7 @@ class FirestoreMatchDetailStore:
         snapshot = ref.get()
         current_hash = (snapshot.to_dict() or {}).get("_hash") if snapshot.exists else None
         if current_hash == detail_hash:
+            ref.set({"_nextRefreshAt": _next_refresh_at(detail), "_updatedAt": firestore.SERVER_TIMESTAMP}, merge=True)
             return False
         ref.set(
             {

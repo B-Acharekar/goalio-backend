@@ -11,6 +11,8 @@ from app.api.dependencies import (
     get_match_detail_store,
     get_profile_repository,
     get_scoreboard_store,
+    get_thesportsdb_provider,
+    get_quiz_repository,
 )
 from app.main import app
 from app.schemas.football import PlayerPage, PlayerResult, TeamPage, TeamResult
@@ -18,6 +20,9 @@ from app.schemas.matches import MatchTeam, ScoreboardMatch
 from app.schemas.profile import ProfileUpsert, UserProfile
 from app.services.worldcup import _bracket
 from app.services.lineups import CachedLineup
+from app.services.lineup_providers.base import ProviderResult
+from app.schemas.quiz import LeaderboardEntry, QuizAnswerResult, QuizLeaderboard
+from app.services.quiz import QUESTION_BY_ID
 
 
 class MemoryProfiles:
@@ -371,6 +376,24 @@ class MemoryScoreboardStore:
         self.documents[cache_key] = response
 
 
+class EmptyTheSportsDb:
+    def fetch(self, meta):
+        return ProviderResult(attempts=[{"provider": "theSportsDb", "step": "test", "success": False}])
+
+
+class MemoryQuiz:
+    def __init__(self): self.sessions = {}; self.xp = {}
+    def create(self, uid, question_ids, now):
+        sid = f"session-{len(self.sessions)}"; self.sessions[sid] = [uid, question_ids, 0, now]; return sid
+    def answer(self, uid, session_id, question_id, answer_index, now):
+        session = self.sessions[session_id]; question = QUESTION_BY_ID[question_id]; correct = answer_index == question[4]
+        delta = 10 if correct else -5; self.xp[uid] = max(0, self.xp.get(uid, 0) + delta); session[2] += 1
+        return QuizAnswerResult(correct=correct, timedOut=False, correctAnswerIndex=question[4], explanation=question[5], xpDelta=delta, totalXp=self.xp[uid], currentQuestion=session[2], completed=session[2] == 5, questionStartedAt=None if session[2] == 5 else now)
+    def leaderboard(self, uid, limit):
+        entry = LeaderboardEntry(rank=1, username="aegies", xp=self.xp.get(uid, 0), userId=uid)
+        return QuizLeaderboard(entries=[entry], me=entry)
+
+
 repository = MemoryProfiles()
 app.dependency_overrides[get_current_user] = lambda: CurrentUser("test-user")
 app.dependency_overrides[get_profile_repository] = lambda: repository
@@ -379,6 +402,9 @@ app.dependency_overrides[get_match_detail_client] = lambda: MemoryMatchDetail()
 app.dependency_overrides[get_match_detail_store] = lambda: MemoryMatchDetail()
 app.dependency_overrides[get_lineup_store] = lambda: MemoryLineupStore()
 app.dependency_overrides[get_scoreboard_store] = lambda: MemoryScoreboardStore()
+app.dependency_overrides[get_thesportsdb_provider] = lambda: EmptyTheSportsDb()
+quiz_repository = MemoryQuiz()
+app.dependency_overrides[get_quiz_repository] = lambda: quiz_repository
 client = TestClient(app)
 
 
@@ -669,6 +695,30 @@ def test_match_schedule_rejects_bad_iso_date():
     response = client.get("/api/v1/matches/fifa.world/schedule?date=20260614")
     assert response.status_code == 422
     assert response.json()["detail"] == "date must be YYYY-MM-DD"
+
+
+def test_quiz_session_has_five_questions_without_answers_and_updates_xp():
+    started = client.post("/api/v1/quiz/sessions")
+    assert started.status_code == 200
+    session = started.json()
+    assert len(session["questions"]) == 5
+    assert "correctAnswerIndex" not in session["questions"][0]
+    question = session["questions"][0]
+    correct_index = QUESTION_BY_ID[question["id"]][4]
+    answered = client.post(f"/api/v1/quiz/sessions/{session['sessionId']}/answer", json={"questionId": question["id"], "answerIndex": correct_index})
+    assert answered.status_code == 200
+    assert answered.json()["correct"] is True
+    assert answered.json()["xpDelta"] == 10
+
+
+def test_quiz_wrong_answer_has_negative_xp_and_leaderboard_uses_username():
+    session = client.post("/api/v1/quiz/sessions").json()
+    question = session["questions"][0]
+    correct = QUESTION_BY_ID[question["id"]][4]
+    result = client.post(f"/api/v1/quiz/sessions/{session['sessionId']}/answer", json={"questionId": question["id"], "answerIndex": (correct + 1) % 4}).json()
+    assert result["xpDelta"] == -5
+    leaderboard = client.get("/api/v1/quiz/leaderboard").json()
+    assert leaderboard["entries"][0]["username"] == "aegies"
 
 
 def test_health_check():

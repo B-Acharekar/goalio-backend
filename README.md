@@ -140,6 +140,12 @@ Procfile `worker` process (or invoke `python -m app.jobs.sync_live_scores` from 
 two minutes) so scores continue updating even when no app client is currently open. Match-detail
 documents also remain due every 120 seconds after kickoff until the match reaches a final state.
 
+Lineups use ESPN match detail first and call TheSportsDB only when ESPN has no complete starting XI.
+Configure `THESPORTSDB_API_KEY` (the free/test key defaults to `123`), `THESPORTSDB_BASE_URL`, and
+`THESPORTSDB_USE_V2_FALLBACK`. Provider mappings are stored at
+`matches/{eventId}/providerMappings/theSportsDb`. In development/debug mode,
+`GET /api/v1/debug/matches/{eventId}/lineup-provider` reports the masked provider chain.
+
 For `/schedule`, use `date=YYYY-MM-DD` or `from=YYYY-MM-DD&to=YYYY-MM-DD`.
 For lower-level `/scoreboard`, `dates` must be `YYYYMMDD` or `YYYYMMDD-YYYYMMDD`.
 For example, use `20260609`, not `2026069`.

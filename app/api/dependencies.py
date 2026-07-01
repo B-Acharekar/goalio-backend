@@ -11,6 +11,8 @@ from app.repositories.football import FirestoreFootballRepository, FootballRepos
 from app.repositories.profiles import FirestoreProfileRepository, ProfileRepository
 from app.services.match_detail import EspnMatchDetailClient, FirestoreMatchDetailStore, FirestoreScoreboardStore, MatchDetailStore, ScoreboardStore
 from app.services.lineups import FirestoreLineupStore, LineupStore
+from app.services.lineup_providers.thesportsdb import FirestoreProviderMappingStore, TheSportsDbProvider
+from app.services.quiz import FirestoreQuizRepository, QuizRepository
 
 
 bearer = HTTPBearer(
@@ -76,3 +78,15 @@ def get_scoreboard_store() -> ScoreboardStore:
 @lru_cache
 def get_lineup_store() -> LineupStore:
     return FirestoreLineupStore(get_firestore_client())
+
+
+@lru_cache
+def get_thesportsdb_provider() -> TheSportsDbProvider:
+    settings = get_settings()
+    return TheSportsDbProvider(settings.thesportsdb_api_key, settings.thesportsdb_base_url,
+                               settings.thesportsdb_use_v2_fallback, FirestoreProviderMappingStore(get_firestore_client()))
+
+
+@lru_cache
+def get_quiz_repository() -> QuizRepository:
+    return FirestoreQuizRepository(get_firestore_client())
