@@ -10,6 +10,7 @@ from app.core.firebase import get_firestore_client, initialize_firebase
 from app.repositories.football import FirestoreFootballRepository, FootballRepository
 from app.repositories.profiles import FirestoreProfileRepository, ProfileRepository
 from app.services.match_detail import EspnMatchDetailClient, FirestoreMatchDetailStore, MatchDetailStore
+from app.services.lineups import FirestoreLineupStore, LineupStore
 
 
 bearer = HTTPBearer(
@@ -65,3 +66,8 @@ def get_match_detail_client() -> EspnMatchDetailClient:
 @lru_cache
 def get_match_detail_store() -> MatchDetailStore:
     return FirestoreMatchDetailStore(get_firestore_client())
+
+
+@lru_cache
+def get_lineup_store() -> LineupStore:
+    return FirestoreLineupStore(get_firestore_client())

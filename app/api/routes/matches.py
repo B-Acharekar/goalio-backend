@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, Path, Query
 
-from app.api.dependencies import CurrentUser, get_current_user, get_match_detail_client, get_match_detail_store
+from app.api.dependencies import CurrentUser, get_current_user, get_lineup_store, get_match_detail_client, get_match_detail_store
+from app.schemas.lineups import MatchLineupResponse
 from app.schemas.matches import MatchDetail, ScoreboardResponse, StandingsResponse
+from app.services.lineups import LineupService, LineupStore
 from app.services.match_detail import EspnMatchDetailClient, MatchDetailStore, validate_scoreboard_dates
 
 
@@ -25,6 +27,17 @@ def match_detail(
     store: MatchDetailStore = Depends(get_match_detail_store),
 ) -> MatchDetail:
     return client.cached_detail(league, event_id, store)
+
+
+@router.get("/{event_id}/lineup", response_model=MatchLineupResponse)
+def match_lineup(
+    event_id: str = Path(max_length=40),
+    league: str = Query(default="fifa.world", max_length=40),
+    _: CurrentUser = Depends(get_current_user),
+    client: EspnMatchDetailClient = Depends(get_match_detail_client),
+    store: LineupStore = Depends(get_lineup_store),
+) -> MatchLineupResponse:
+    return LineupService(client, store).get(league, event_id)
 
 
 @router.get("/{league}/scoreboard", response_model=ScoreboardResponse)

@@ -61,6 +61,10 @@ class LineupPlayer(BaseModel):
     captain: bool = False
     substitute: bool = False
     formationPlace: str | None = None
+    role: str | None = None
+    photo: str | None = None
+    x: float | None = None
+    y: float | None = None
 
 
 class TeamLineup(BaseModel):

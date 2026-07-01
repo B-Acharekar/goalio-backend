@@ -6,6 +6,7 @@ from app.api.dependencies import (
     CurrentUser,
     get_current_user,
     get_football_repository,
+    get_lineup_store,
     get_match_detail_client,
     get_match_detail_store,
     get_profile_repository,
@@ -15,6 +16,7 @@ from app.schemas.football import PlayerPage, PlayerResult, TeamPage, TeamResult
 from app.schemas.matches import MatchTeam, ScoreboardMatch
 from app.schemas.profile import ProfileUpsert, UserProfile
 from app.services.worldcup import _bracket
+from app.services.lineups import CachedLineup
 
 
 class MemoryProfiles:
@@ -322,6 +324,29 @@ class MemoryMatchDetail:
             },
         )
 
+    def espn_detail(self, league: str, event_id: str):
+        return self.detail(league, event_id)
+
+    def espn_lineups(self, league: str, event_id: str):
+        return self.detail(league, event_id).lineups
+
+    def google_lineups(self, league: str, event_id: str, detail=None):
+        return []
+
+    def yahoo_lineups(self, league: str, event_id: str, detail=None):
+        return []
+
+
+class MemoryLineupStore:
+    def __init__(self):
+        self.documents = {}
+
+    def get(self, event_id: str):
+        return self.documents.get(event_id)
+
+    def write(self, response, attempts, content_hash):
+        self.documents[response.eventId] = CachedLineup(response, content_hash)
+
 
 repository = MemoryProfiles()
 app.dependency_overrides[get_current_user] = lambda: CurrentUser("test-user")
@@ -329,6 +354,7 @@ app.dependency_overrides[get_profile_repository] = lambda: repository
 app.dependency_overrides[get_football_repository] = lambda: MemoryFootball()
 app.dependency_overrides[get_match_detail_client] = lambda: MemoryMatchDetail()
 app.dependency_overrides[get_match_detail_store] = lambda: MemoryMatchDetail()
+app.dependency_overrides[get_lineup_store] = lambda: MemoryLineupStore()
 client = TestClient(app)
 
 
@@ -445,6 +471,21 @@ def test_match_scoreboard_returns_event_ids_for_detail():
     assert body["matches"][0]["statusDescription"] == "Full Time"
     assert body["matches"][0]["state"] == "post"
     assert body["matches"][0]["detailApi"] == "/api/matches/fifa.world/760422/detail"
+
+
+def test_match_lineup_returns_normalized_pitch_response():
+    response = client.get("/api/v1/matches/760422/lineup?league=fifa.world")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["eventId"] == "760422"
+    assert body["status"] == "FINAL"
+    assert body["source"] == "espn"
+    assert body["home"]["formation"] == "4-2-3-1"
+    assert body["home"]["manager"]["name"] == "Julian Nagelsmann"
+    assert body["home"]["startingXI"][0]["name"] == "Manuel Neuer"
+    assert body["home"]["startingXI"][0]["x"] == 50
+    assert body["home"]["startingXI"][0]["y"] == 92
+    assert body["home"]["bench"][0]["number"] == 22
 
 
 def test_worldcup_bootstrap_returns_compact_library_payload():

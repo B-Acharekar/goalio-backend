@@ -114,6 +114,14 @@ class EspnMatchDetailClient:
         return store.get(league, event_id) or fresh
 
     def detail(self, league: str, event_id: str) -> MatchDetail:
+        detail = self.espn_detail(league, event_id)
+        if not detail.lineups:
+            lineups = self._lineups_from_fallbacks(league, event_id, detail)
+            if lineups:
+                detail.lineups = lineups
+        return detail
+
+    def espn_detail(self, league: str, event_id: str) -> MatchDetail:
         _validate_league(league)
         try:
             response = httpx.get(
@@ -134,12 +142,16 @@ class EspnMatchDetailClient:
                 status.HTTP_502_BAD_GATEWAY,
                 "ESPN match summary is temporarily unavailable",
             ) from exc
-        detail = normalize_espn_summary(league, event_id, response.json())
-        if not detail.lineups:
-            lineups = self._lineups_from_fallbacks(league, event_id, detail)
-            if lineups:
-                detail.lineups = lineups
-        return detail
+        return normalize_espn_summary(league, event_id, response.json())
+
+    def espn_lineups(self, league: str, event_id: str) -> list[TeamLineup]:
+        return self._lineups_from_espn_hidden_api(league, event_id)
+
+    def google_lineups(self, league: str, event_id: str, detail: MatchDetail | None = None) -> list[TeamLineup]:
+        return self._lineups_from_google_sports(league, event_id, detail)
+
+    def yahoo_lineups(self, league: str, event_id: str, detail: MatchDetail | None = None) -> list[TeamLineup]:
+        return self._lineups_from_yahoo_sports(league, event_id, detail)
 
     def _lineups_from_fallbacks(self, league: str, event_id: str, detail: MatchDetail) -> list[TeamLineup]:
         return (
@@ -197,12 +209,12 @@ class EspnMatchDetailClient:
                 return lineups
         return []
 
-    def _lineups_from_google_sports(self, league: str, event_id: str) -> list[TeamLineup]:
+    def _lineups_from_google_sports(self, league: str, event_id: str, detail: MatchDetail | None = None) -> list[TeamLineup]:
         # Best-effort fallback. Google Sports pages are not a stable API, so keep this read-only and fail closed.
         try:
             response = httpx.get(
                 "https://www.google.com/search",
-                params={"q": f"ESPN soccer {league} {event_id} lineups"},
+                params={"q": _lineup_search_query(league, event_id, detail)},
                 headers={"User-Agent": "Mozilla/5.0 GoalioBot/1.0"},
                 timeout=self.timeout,
             )
@@ -222,6 +234,33 @@ class EspnMatchDetailClient:
         except httpx.HTTPError:
             return []
         return _lineups_from_html(response.text)
+
+    def _lineups_from_yahoo_sports(self, league: str, event_id: str, detail: MatchDetail | None = None) -> list[TeamLineup]:
+        headers = {"User-Agent": "Mozilla/5.0 GoalioBot/1.0"}
+        try:
+            search = httpx.get(
+                "https://search.yahoo.com/search",
+                params={"p": f"site:sports.yahoo.com {_lineup_search_query(league, event_id, detail)}"},
+                headers=headers,
+                timeout=self.timeout,
+            )
+            search.raise_for_status()
+        except httpx.HTTPError:
+            return []
+        links = [
+            link.replace("&amp;", "&")
+            for link in re.findall(r'https?://sports\.yahoo\.com/[^"<> ]+', search.text)
+        ]
+        for link in dict.fromkeys(links):
+            try:
+                response = httpx.get(link, headers=headers, timeout=self.timeout, follow_redirects=True)
+                response.raise_for_status()
+            except httpx.HTTPError:
+                continue
+            lineups = _lineups_from_html(response.text)
+            if lineups:
+                return lineups
+        return []
 
     def scoreboard(self, league: str, dates: str | None = None) -> ScoreboardResponse:
         _validate_league(league)
@@ -838,6 +877,9 @@ def _lineup_player(value: Any) -> LineupPlayer | None:
         substitute = True
     position = _as_dict(athlete.get("position")) or _as_dict(item.get("position"))
     formation_place = _string(item.get("formationPlace")) or _string(item.get("formation_place"))
+    headshot = _as_dict(athlete.get("headshot")) or _as_dict(item.get("headshot"))
+    x = _float_or_none(item.get("x"))
+    y = _float_or_none(item.get("y"))
     return LineupPlayer(
         id=_string(athlete.get("id")) or _string(item.get("id")),
         name=name,
@@ -850,6 +892,10 @@ def _lineup_player(value: Any) -> LineupPlayer | None:
         captain=bool(item.get("captain") or item.get("isCaptain")),
         substitute=substitute,
         formationPlace=formation_place,
+        role=_string(position.get("displayName")) or _string(position.get("name")),
+        photo=_string(headshot.get("href")) or _string(athlete.get("photo")) or _string(item.get("photo")),
+        x=x,
+        y=y,
     )
 
 
@@ -890,10 +936,19 @@ def _lineups_from_html(html: str) -> list[TeamLineup]:
     return []
 
 
+def _lineup_search_query(league: str, event_id: str, detail: MatchDetail | None) -> str:
+    teams = [
+        team.shortName or team.name
+        for team in (detail.homeTeam, detail.awayTeam) if team is not None
+    ] if detail else []
+    return " ".join([*teams, "football lineups", league, event_id])
+
+
 def _embedded_json_candidates(html: str) -> list[str]:
     candidates = []
     for pattern in (
         r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+        r'<script[^>]+type="application/(?:ld\+)?json"[^>]*>(.*?)</script>',
         r"window\.__espnfitt__\s*=\s*({.*?});",
         r"window\['__espnfitt__'\]\s*=\s*({.*?});",
     ):
@@ -1066,5 +1121,12 @@ def _string(value: Any) -> str | None:
 def _int_or_none(value: Any) -> int | None:
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
