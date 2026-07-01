@@ -24,6 +24,8 @@ class WorldCupBracketMatch(BaseModel):
     status: str | None = None
     homeTeam: str | None = None
     awayTeam: str | None = None
+    homeTeamLogo: str | None = None
+    awayTeamLogo: str | None = None
     homeScore: int | None = None
     awayScore: int | None = None
     winnerTeamId: str | None = None

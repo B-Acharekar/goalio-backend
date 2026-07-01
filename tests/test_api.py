@@ -118,6 +118,9 @@ class MemoryMatchDetail:
                                     {"name": "points", "value": 6},
                                     {"name": "gamesPlayed", "value": 2},
                                     {"name": "wins", "value": 2},
+                                    {"name": "goalsFor", "value": 5},
+                                    {"name": "goalsAgainst", "value": 1},
+                                    {"name": "goalDifference", "value": 4},
                                 ],
                             }
                         ],
@@ -450,6 +453,8 @@ def test_worldcup_bootstrap_returns_compact_library_payload():
     assert body["tournament"]["hostCities"] == 16
     assert body["groups"][0]["code"] == "A"
     assert body["groups"][0]["teams"][0]["name"] == "Germany"
+    assert body["groups"][0]["teams"][0]["goalsFor"] == 5
+    assert body["groups"][0]["teams"][0]["goalDifference"] == 4
     assert body["bracket"][0]["matches"][0]["matchNumber"] == 74
     assert body["bracket"][0]["matches"][0]["homeTeam"] == "Germany"
     assert body["library"][0]["id"] == "pele-legacy"

@@ -619,6 +619,9 @@ def _standing_team(entry: Any, group_name: str | None, stage_name: str | None) -
         wins=stat_int("wins", "w"),
         draws=stat_int("ties", "draws", "d", "t"),
         losses=stat_int("losses", "l"),
+        goalsFor=stat_int("pointsFor", "goalsFor", "gf", "f"),
+        goalsAgainst=stat_int("pointsAgainst", "goalsAgainst", "ga", "a"),
+        goalDifference=stat_int("pointDifferential", "goalDifference", "gd", "diff"),
         points=stat_int("points", "pts"),
     )
 

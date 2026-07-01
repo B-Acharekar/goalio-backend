@@ -38,6 +38,14 @@ ROUND_32_FALLBACK = [
     (87, "Colombia", "Ghana"),
 ]
 
+ROUND_MATCH_ORDER = {
+    "Round of 32": [74, 77, 73, 75, 83, 84, 81, 82, 76, 78, 79, 80, 86, 88, 85, 87],
+    "Round of 16": [89, 90, 93, 94, 91, 92, 95, 96],
+    "Quarterfinals": [97, 98, 99, 100],
+    "Semifinals": [101, 102],
+    "Final": [104],
+}
+
 
 LIBRARY_ITEMS = [
     WorldCupLibraryItem(
@@ -150,6 +158,8 @@ def _bracket(matches: list[ScoreboardMatch]) -> list[WorldCupBracketRound]:
                 status=match.statusDescription or match.status,
                 homeTeam=match.homeTeam.shortName if match.homeTeam else None,
                 awayTeam=match.awayTeam.shortName if match.awayTeam else None,
+                homeTeamLogo=match.homeTeam.logo if match.homeTeam else None,
+                awayTeamLogo=match.awayTeam.logo if match.awayTeam else None,
                 homeScore=match.homeTeam.score if match.homeTeam else None,
                 awayScore=match.awayTeam.score if match.awayTeam else None,
                 winnerTeamId=_winner(match),
@@ -169,7 +179,23 @@ def _bracket(matches: list[ScoreboardMatch]) -> list[WorldCupBracketRound]:
             )
             for number, home, away in ROUND_32_FALLBACK
         ]
-    return [WorldCupBracketRound(round=name, matches=rounds.get(name, [])) for name in order if rounds.get(name)]
+    return [
+        WorldCupBracketRound(round=name, matches=_ordered_round(name, rounds.get(name, [])))
+        for name in order
+        if rounds.get(name)
+    ]
+
+
+def _ordered_round(name: str, matches: list[WorldCupBracketMatch]) -> list[WorldCupBracketMatch]:
+    expected = {number: index for index, number in enumerate(ROUND_MATCH_ORDER.get(name, []))}
+    return sorted(
+        matches,
+        key=lambda match: (
+            expected.get(match.matchNumber or -1, 999),
+            match.kickoff or "",
+            match.eventId,
+        ),
+    )
 
 
 def _round_name(*values: str | None) -> str | None:

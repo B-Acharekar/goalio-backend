@@ -137,6 +137,9 @@ class StandingTeam(BaseModel):
     wins: int | None = None
     draws: int | None = None
     losses: int | None = None
+    goalsFor: int | None = None
+    goalsAgainst: int | None = None
+    goalDifference: int | None = None
     points: int | None = None
 
 
