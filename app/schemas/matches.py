@@ -79,6 +79,12 @@ class MatchEvent(BaseModel):
     team: str | None = None
 
 
+class WinProbability(BaseModel):
+    homeWinPercentage: int
+    awayWinPercentage: int
+    drawPercentage: int | None = None
+
+
 class MatchDetail(BaseModel):
     matchId: str
     league: str
@@ -95,6 +101,7 @@ class MatchDetail(BaseModel):
     lineups: list[TeamLineup] = Field(default_factory=list)
     events: list[MatchEvent] = Field(default_factory=list)
     summary: str | None = None
+    winProbability: WinProbability | None = None
 
 
 class ScoreboardMatch(BaseModel):
