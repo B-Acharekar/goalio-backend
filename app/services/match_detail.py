@@ -26,6 +26,7 @@ from app.schemas.matches import (
     StandingsResponse,
     TeamLineup,
     TeamStats,
+    WinProbability,
 )
 
 
@@ -423,7 +424,7 @@ def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) 
     )
     
     from app.services.probability import calculate_win_probability
-    detail.winProbability = calculate_win_probability(detail)
+    detail.winProbability = _win_probability(payload) or calculate_win_probability(detail)
     
     return detail
 
@@ -631,6 +632,84 @@ def _venue(value: Any) -> MatchVenue | None:
         name=_string(venue.get("fullName")) or _string(venue.get("name")),
         city=_string(address.get("city")) or _string(venue.get("city")),
     )
+
+
+def _win_probability(payload: dict[str, Any]) -> WinProbability | None:
+    candidate = _find_probability_candidate(payload)
+    if candidate is None:
+        return None
+    home = _probability_value(candidate, "homeWinPercentage", "homeWinProbability", "home", "homeTeam")
+    away = _probability_value(candidate, "awayWinPercentage", "awayWinProbability", "away", "awayTeam")
+    draw = _probability_value(candidate, "drawPercentage", "tiePercentage", "drawProbability", "tieProbability", "draw", "tie")
+    if home is None or away is None:
+        return None
+    if draw is None:
+        draw = max(0, 100 - home - away)
+    total = home + away + draw
+    if total != 100 and total > 0:
+        home = round(home / total * 100)
+        away = round(away / total * 100)
+        draw = max(0, 100 - home - away)
+    return WinProbability(
+        homeWinPercentage=max(0, min(100, home)),
+        awayWinPercentage=max(0, min(100, away)),
+        drawPercentage=max(0, min(100, draw)),
+    )
+
+
+def _find_probability_candidate(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        lowered = {str(key).casefold(): key for key in value}
+        if any("probability" in key or "percentage" in key for key in lowered):
+            home = _probability_value(value, "homeWinPercentage", "homeWinProbability", "home", "homeTeam")
+            away = _probability_value(value, "awayWinPercentage", "awayWinProbability", "away", "awayTeam")
+            if home is not None and away is not None:
+                return value
+        for key in ("winProbability", "winprobability", "probabilities", "predictor", "odds"):
+            child_key = lowered.get(key.casefold())
+            if child_key is not None:
+                found = _find_probability_candidate(value.get(child_key))
+                if found is not None:
+                    return found
+        for child in value.values():
+            found = _find_probability_candidate(child)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_probability_candidate(child)
+            if found is not None:
+                return found
+    return None
+
+
+def _probability_value(value: dict[str, Any], *keys: str) -> int | None:
+    normalized = {str(key).casefold(): item for key, item in value.items()}
+    for key in keys:
+        raw = normalized.get(key.casefold())
+        if isinstance(raw, dict):
+            raw = raw.get("value") or raw.get("percentage") or raw.get("displayValue")
+        parsed = _percent(raw)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _percent(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+        if match is None:
+            return None
+        number = float(match.group(0))
+    if 0 <= number <= 1:
+        number *= 100
+    if number < 0:
+        return None
+    return int(round(number))
 
 
 def _officials(value: Any) -> list[MatchOfficial]:

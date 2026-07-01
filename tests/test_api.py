@@ -422,6 +422,7 @@ def test_match_detail_normalization():
     assert body["lineups"][0]["coach"] == "Julian Nagelsmann"
     assert body["lineups"][0]["starters"][0]["name"] == "Manuel Neuer"
     assert body["lineups"][0]["substitutes"][0]["jersey"] == "22"
+    assert body["winProbability"]["homeWinPercentage"] == 100
     assert body["events"][0]["minute"] == "38'"
     assert body["summary"] == "Germany won comfortably."
 
