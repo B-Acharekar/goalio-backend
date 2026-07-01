@@ -149,7 +149,7 @@ def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) 
     status_type = _as_dict(_as_dict(competition.get("status")).get("type"))
     article = _as_dict(payload.get("article"))
 
-    return MatchDetail(
+    detail = MatchDetail(
         matchId=str(event_id),
         league=league,
         status=_string(status_type.get("abbreviation")) or _string(status_type.get("shortDetail")),
@@ -164,6 +164,11 @@ def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) 
         events=_events(competition.get("details"), payload.get("commentary")),
         summary=_string(article.get("story")) or _string(article.get("description")),
     )
+    
+    from app.services.probability import calculate_win_probability
+    detail.winProbability = calculate_win_probability(detail)
+    
+    return detail
 
 
 def _validate_league(league: str) -> None:
