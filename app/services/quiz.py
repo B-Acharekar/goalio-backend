@@ -41,6 +41,18 @@ QUESTION_BANK = [
     ("club_anfield", "Clubs", "Which club plays at Anfield?", ["Everton", "Liverpool", "Manchester United", "Aston Villa"], 1, "Anfield is Liverpool's home ground."),
     ("club_bernabeu", "Clubs", "Which club plays at the Santiago Bernabéu?", ["Real Madrid", "Atlético Madrid", "Barcelona", "Sevilla"], 0, "The Bernabéu is Real Madrid's home stadium."),
     ("club_signal", "Clubs", "Signal Iduna Park is home to which club?", ["Bayern Munich", "Schalke 04", "Borussia Dortmund", "Bayer Leverkusen"], 2, "Borussia Dortmund plays at Signal Iduna Park."),
+    ("flag_brazil", "Country Flags", "Which national team uses this flag? 🇧🇷", ["Brazil", "Portugal", "Mexico", "Colombia"], 0, "The green, yellow and blue flag belongs to Brazil."),
+    ("flag_argentina", "Country Flags", "Name the country represented by this flag: 🇦🇷", ["Uruguay", "Argentina", "Paraguay", "Chile"], 1, "The sky-blue and white flag is Argentina's."),
+    ("flag_france", "Country Flags", "Which football nation is represented by 🇫🇷?", ["Netherlands", "Croatia", "France", "Belgium"], 2, "This blue-white-red tricolour is France."),
+    ("flag_germany", "Country Flags", "Identify this national-team flag: 🇩🇪", ["Belgium", "Germany", "Austria", "Spain"], 1, "Black, red and gold represent Germany."),
+    ("flag_spain", "Country Flags", "Which country plays under this flag? 🇪🇸", ["Spain", "Portugal", "Romania", "Ecuador"], 0, "This is Spain's national flag."),
+    ("flag_england", "Country Flags", "The Three Lions represent which country? 🏴", ["Scotland", "Wales", "England", "Northern Ireland"], 2, "The Three Lions are England's national team."),
+    ("crest_cannon", "Club Symbols", "Which club's crest prominently features a cannon?", ["West Ham United", "Arsenal", "Aston Villa", "Chelsea"], 1, "Arsenal's identity and crest feature a cannon."),
+    ("crest_liverbird", "Club Symbols", "The Liver bird is the symbol of which club?", ["Everton", "Liverpool", "Manchester City", "Newcastle United"], 1, "The Liver bird is central to Liverpool's crest."),
+    ("crest_red_devil", "Club Symbols", "Which club is nicknamed the Red Devils and shows a devil on its crest?", ["Nottingham Forest", "Manchester United", "Bayern Munich", "AC Milan"], 1, "Manchester United is known as the Red Devils."),
+    ("crest_bat", "Club Symbols", "Which Spanish club has a bat above the shield on its crest?", ["Valencia", "Villarreal", "Sevilla", "Real Betis"], 0, "Valencia's crest is topped by a bat."),
+    ("crest_wolf", "Club Symbols", "Which Serie A club is represented by the she-wolf symbol?", ["Lazio", "Roma", "Torino", "Fiorentina"], 1, "Roma's crest depicts the Capitoline Wolf."),
+    ("crest_fleur", "Club Symbols", "Which Ligue 1 club's modern crest features the Eiffel Tower?", ["Lyon", "Marseille", "Monaco", "Paris Saint-Germain"], 3, "PSG's crest prominently features the Eiffel Tower."),
 ]
 QUESTION_BY_ID = {item[0]: item for item in QUESTION_BANK}
 
