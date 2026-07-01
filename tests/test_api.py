@@ -7,6 +7,7 @@ from app.api.dependencies import (
     get_current_user,
     get_football_repository,
     get_match_detail_client,
+    get_match_detail_store,
     get_profile_repository,
 )
 from app.main import app
@@ -58,6 +59,27 @@ class MemoryFootball:
 
 
 class MemoryMatchDetail:
+    def __init__(self):
+        self.documents = {}
+
+    def get(self, league: str, event_id: str):
+        return self.documents.get((league, event_id))
+
+    def is_due(self, league: str, event_id: str):
+        return (league, event_id) not in self.documents
+
+    def write_if_changed(self, detail):
+        self.documents[(detail.league, detail.matchId)] = detail
+        return True
+
+    def cached_detail(self, league: str, event_id: str, store):
+        cached = store.get(league, event_id)
+        if cached is not None and not store.is_due(league, event_id):
+            return cached
+        detail = self.detail(league, event_id)
+        store.write_if_changed(detail)
+        return detail
+
     def schedule(
         self,
         league: str,
@@ -78,6 +100,32 @@ class MemoryMatchDetail:
         from app.services.match_detail import normalize_espn_scoreboard
 
         return normalize_espn_scoreboard(league, self._scoreboard_payload())
+
+    def standings(self, league: str, season: int | None = None):
+        from app.services.match_detail import normalize_espn_standings
+
+        return normalize_espn_standings(
+            league,
+            {
+                "standings": [
+                    {
+                        "name": "Group A",
+                        "entries": [
+                            {
+                                "team": {"id": "481", "displayName": "Germany", "abbreviation": "GER"},
+                                "stats": [
+                                    {"name": "rank", "value": 1},
+                                    {"name": "points", "value": 6},
+                                    {"name": "gamesPlayed", "value": 2},
+                                    {"name": "wins", "value": 2},
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+            season,
+        )
 
     def _scoreboard_payload(self):
         return {
@@ -275,6 +323,7 @@ app.dependency_overrides[get_current_user] = lambda: CurrentUser("test-user")
 app.dependency_overrides[get_profile_repository] = lambda: repository
 app.dependency_overrides[get_football_repository] = lambda: MemoryFootball()
 app.dependency_overrides[get_match_detail_client] = lambda: MemoryMatchDetail()
+app.dependency_overrides[get_match_detail_store] = lambda: MemoryMatchDetail()
 client = TestClient(app)
 
 
@@ -390,6 +439,18 @@ def test_match_scoreboard_returns_event_ids_for_detail():
     assert body["matches"][0]["statusDescription"] == "Full Time"
     assert body["matches"][0]["state"] == "post"
     assert body["matches"][0]["detailApi"] == "/api/matches/fifa.world/760422/detail"
+
+
+def test_worldcup_bootstrap_returns_compact_library_payload():
+    response = client.get("/api/v1/worldcup/bootstrap")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tournament"]["id"] == "worldcup-2026"
+    assert body["tournament"]["hostCities"] == 16
+    assert body["groups"][0]["code"] == "A"
+    assert body["groups"][0]["teams"][0]["name"] == "Germany"
+    assert body["library"][0]["id"] == "pele-legacy"
+    assert body["randomFact"]["title"]
 
 
 def test_match_scoreboard_rejects_malformed_dates():

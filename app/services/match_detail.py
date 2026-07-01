@@ -1,7 +1,13 @@
-from typing import Any
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import re
+from typing import Any, Protocol
 
 import httpx
 from fastapi import HTTPException, status
+from firebase_admin import firestore
+from google.cloud.firestore_v1 import Client
 
 from app.schemas.matches import (
     MatchDetail,
@@ -37,10 +43,74 @@ SUPPORTED_ESPN_LEAGUES = {
 }
 
 
+class MatchDetailStore(Protocol):
+    def get(self, league: str, event_id: str) -> MatchDetail | None: ...
+
+    def is_due(self, league: str, event_id: str) -> bool: ...
+
+    def write_if_changed(self, detail: MatchDetail) -> bool: ...
+
+
+class FirestoreMatchDetailStore:
+    collection_name = "match_details"
+
+    def __init__(self, client: Client):
+        self.client = client
+
+    def _ref(self, league: str, event_id: str):
+        return self.client.collection(self.collection_name).document(_match_doc_id(league, event_id))
+
+    def get(self, league: str, event_id: str) -> MatchDetail | None:
+        snapshot = self._ref(league, event_id).get()
+        if not snapshot.exists:
+            return None
+        data = snapshot.to_dict() or {}
+        return MatchDetail(**{key: value for key, value in data.items() if not key.startswith("_")})
+
+    def is_due(self, league: str, event_id: str) -> bool:
+        snapshot = self._ref(league, event_id).get()
+        if not snapshot.exists:
+            return True
+        data = snapshot.to_dict() or {}
+        next_refresh = data.get("_nextRefreshAt")
+        if next_refresh is None:
+            return False
+        if hasattr(next_refresh, "timestamp"):
+            return datetime.now(timezone.utc) >= next_refresh
+        parsed = _parse_datetime(_string(next_refresh))
+        return parsed is not None and datetime.now(timezone.utc) >= parsed
+
+    def write_if_changed(self, detail: MatchDetail) -> bool:
+        payload = _detail_payload(detail)
+        detail_hash = _stable_hash(payload)
+        ref = self._ref(detail.league, detail.matchId)
+        snapshot = ref.get()
+        current_hash = (snapshot.to_dict() or {}).get("_hash") if snapshot.exists else None
+        if current_hash == detail_hash:
+            return False
+        ref.set(
+            {
+                **payload,
+                "_hash": detail_hash,
+                "_nextRefreshAt": _next_refresh_at(detail),
+                "_updatedAt": firestore.SERVER_TIMESTAMP,
+            }
+        )
+        return True
+
+
 class EspnMatchDetailClient:
     def __init__(self, base_url: str = ESPN_SUMMARY_BASE_URL, timeout: float = 8.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+
+    def cached_detail(self, league: str, event_id: str, store: MatchDetailStore) -> MatchDetail:
+        cached = store.get(league, event_id)
+        if cached is not None and not store.is_due(league, event_id):
+            return cached
+        fresh = self.detail(league, event_id)
+        store.write_if_changed(fresh)
+        return store.get(league, event_id) or fresh
 
     def detail(self, league: str, event_id: str) -> MatchDetail:
         _validate_league(league)
@@ -63,7 +133,63 @@ class EspnMatchDetailClient:
                 status.HTTP_502_BAD_GATEWAY,
                 "ESPN match summary is temporarily unavailable",
             ) from exc
-        return normalize_espn_summary(league, event_id, response.json())
+        detail = normalize_espn_summary(league, event_id, response.json())
+        if not detail.lineups:
+            lineups = self._lineups_from_fallbacks(league, event_id)
+            if lineups:
+                detail.lineups = lineups
+        return detail
+
+    def _lineups_from_fallbacks(self, league: str, event_id: str) -> list[TeamLineup]:
+        return (
+            self._lineups_from_espn_hidden_api(league, event_id)
+            or self._lineups_from_google_sports(league, event_id)
+            or self._lineups_from_espn_match_page(league, event_id)
+        )
+
+    def _lineups_from_espn_hidden_api(self, league: str, event_id: str) -> list[TeamLineup]:
+        urls = (
+            f"{self.base_url}/{league}/summary",
+            f"https://site.web.api.espn.com/apis/common/v3/sports/soccer/{league}/summary",
+        )
+        for url in urls:
+            try:
+                response = httpx.get(url, params={"event": event_id, "region": "us", "lang": "en"}, timeout=self.timeout)
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, ValueError):
+                continue
+            competition = _competition(payload)
+            lineups = _lineups(_as_dict(payload.get("boxscore")), competition.get("competitors") or [])
+            if lineups:
+                return lineups
+        return []
+
+    def _lineups_from_google_sports(self, league: str, event_id: str) -> list[TeamLineup]:
+        # Best-effort fallback. Google Sports pages are not a stable API, so keep this read-only and fail closed.
+        try:
+            response = httpx.get(
+                "https://www.google.com/search",
+                params={"q": f"ESPN soccer {league} {event_id} lineups"},
+                headers={"User-Agent": "Mozilla/5.0 GoalioBot/1.0"},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            return []
+        return _lineups_from_html(response.text)
+
+    def _lineups_from_espn_match_page(self, league: str, event_id: str) -> list[TeamLineup]:
+        try:
+            response = httpx.get(
+                f"https://www.espn.com/soccer/match/_/gameId/{event_id}",
+                headers={"User-Agent": "Mozilla/5.0 GoalioBot/1.0"},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            return []
+        return _lineups_from_html(response.text)
 
     def scoreboard(self, league: str, dates: str | None = None) -> ScoreboardResponse:
         _validate_league(league)
@@ -346,6 +472,52 @@ def _competition(payload: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _match_doc_id(league: str, event_id: str) -> str:
+    return f"{league}_{event_id}".replace("/", "_")
+
+
+def _detail_payload(detail: MatchDetail) -> dict[str, Any]:
+    return detail.model_dump(mode="json")
+
+
+def _stable_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _next_refresh_at(detail: MatchDetail) -> datetime | None:
+    now = datetime.now(timezone.utc)
+    kickoff = _parse_datetime(detail.kickoff)
+    if kickoff is None:
+        return None
+    if detail.statusDescription and detail.statusDescription.casefold() in {"ft", "full time", "final"}:
+        return None
+    if detail.status and detail.status.casefold() in {"ft", "aet", "pen"}:
+        return None
+    windows = (
+        kickoff - timedelta(hours=24),
+        kickoff - timedelta(minutes=30),
+        kickoff,
+    )
+    for window in windows:
+        if now < window:
+            return window
+    return None
+
+
 def _scoreboard_competition(event: dict[str, Any]) -> dict[str, Any]:
     competitions = event.get("competitions")
     if isinstance(competitions, list) and competitions:
@@ -567,6 +739,52 @@ def _coach_name(value: Any) -> str | None:
         or _string(coach.get("fullName"))
         or _string(coach.get("name"))
     )
+
+
+def _lineups_from_html(html: str) -> list[TeamLineup]:
+    for json_text in _embedded_json_candidates(html):
+        try:
+            payload = json.loads(json_text)
+        except ValueError:
+            continue
+        lineups = _lineups_from_any_json(payload)
+        if lineups:
+            return lineups
+    return []
+
+
+def _embedded_json_candidates(html: str) -> list[str]:
+    candidates = []
+    for pattern in (
+        r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+        r"window\.__espnfitt__\s*=\s*({.*?});",
+        r"window\['__espnfitt__'\]\s*=\s*({.*?});",
+    ):
+        candidates.extend(re.findall(pattern, html, flags=re.DOTALL))
+    return candidates
+
+
+def _lineups_from_any_json(value: Any) -> list[TeamLineup]:
+    if isinstance(value, dict):
+        if "boxscore" in value:
+            competition = _competition(value)
+            lineups = _lineups(_as_dict(value.get("boxscore")), competition.get("competitors") or [])
+            if lineups:
+                return lineups
+        if "lineups" in value and isinstance(value["lineups"], list):
+            lineups = _lineups({"teams": value["lineups"]}, [])
+            if lineups:
+                return lineups
+        for child in value.values():
+            lineups = _lineups_from_any_json(child)
+            if lineups:
+                return lineups
+    elif isinstance(value, list):
+        for child in value:
+            lineups = _lineups_from_any_json(child)
+            if lineups:
+                return lineups
+    return []
 
 
 def _team_stats(boxscore: Any) -> list[TeamStats]:

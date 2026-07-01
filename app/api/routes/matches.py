@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Path, Query
 
-from app.api.dependencies import CurrentUser, get_current_user, get_match_detail_client
+from app.api.dependencies import CurrentUser, get_current_user, get_match_detail_client, get_match_detail_store
 from app.schemas.matches import MatchDetail, ScoreboardResponse, StandingsResponse
-from app.services.match_detail import EspnMatchDetailClient, validate_scoreboard_dates
+from app.services.match_detail import EspnMatchDetailClient, MatchDetailStore, validate_scoreboard_dates
 
 
 router = APIRouter(
@@ -22,8 +22,9 @@ def match_detail(
     event_id: str = Path(max_length=40),
     _: CurrentUser = Depends(get_current_user),
     client: EspnMatchDetailClient = Depends(get_match_detail_client),
+    store: MatchDetailStore = Depends(get_match_detail_store),
 ) -> MatchDetail:
-    return client.detail(league, event_id)
+    return client.cached_detail(league, event_id, store)
 
 
 @router.get("/{league}/scoreboard", response_model=ScoreboardResponse)
