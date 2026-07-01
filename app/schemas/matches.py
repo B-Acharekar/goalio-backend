@@ -15,6 +15,17 @@ class MatchVenue(BaseModel):
     city: str | None = None
 
 
+class MatchOfficial(BaseModel):
+    name: str | None = None
+    role: str | None = None
+
+
+class MatchWeather(BaseModel):
+    displayValue: str | None = None
+    temperature: str | None = None
+    condition: str | None = None
+
+
 class MatchStat(BaseModel):
     name: str
     label: str
@@ -41,6 +52,26 @@ class PlayerLeaderCategory(BaseModel):
     players: list[MatchLeaderPlayer] = Field(default_factory=list)
 
 
+class LineupPlayer(BaseModel):
+    id: str | None = None
+    name: str
+    position: str | None = None
+    jersey: str | None = None
+    starter: bool = False
+    captain: bool = False
+    substitute: bool = False
+    formationPlace: str | None = None
+
+
+class TeamLineup(BaseModel):
+    teamId: str | None = None
+    teamName: str | None = None
+    formation: str | None = None
+    coach: str | None = None
+    starters: list[LineupPlayer] = Field(default_factory=list)
+    substitutes: list[LineupPlayer] = Field(default_factory=list)
+
+
 class MatchEvent(BaseModel):
     minute: str | None = None
     type: str | None = None
@@ -57,8 +88,11 @@ class MatchDetail(BaseModel):
     homeTeam: MatchTeam | None = None
     awayTeam: MatchTeam | None = None
     venue: MatchVenue | None = None
+    officials: list[MatchOfficial] = Field(default_factory=list)
+    weather: MatchWeather | None = None
     teamStats: list[TeamStats] = Field(default_factory=list)
     playerLeaders: list[PlayerLeaderCategory] = Field(default_factory=list)
+    lineups: list[TeamLineup] = Field(default_factory=list)
     events: list[MatchEvent] = Field(default_factory=list)
     summary: str | None = None
 
@@ -82,3 +116,25 @@ class ScoreboardResponse(BaseModel):
     league: str
     date: str | None = None
     matches: list[ScoreboardMatch] = Field(default_factory=list)
+
+
+class StandingTeam(BaseModel):
+    rank: int | None = None
+    teamId: str
+    name: str
+    abbreviation: str | None = None
+    logo: str | None = None
+    group: str | None = None
+    stage: str | None = None
+    played: int | None = None
+    wins: int | None = None
+    draws: int | None = None
+    losses: int | None = None
+    points: int | None = None
+
+
+class StandingsResponse(BaseModel):
+    league: str
+    season: int | None = None
+    groups: list[str] = Field(default_factory=list)
+    teams: list[StandingTeam] = Field(default_factory=list)

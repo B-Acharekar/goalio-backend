@@ -7,12 +7,18 @@ from app.schemas.matches import (
     MatchDetail,
     MatchEvent,
     MatchLeaderPlayer,
+    MatchOfficial,
     MatchStat,
     MatchTeam,
     MatchVenue,
+    MatchWeather,
+    LineupPlayer,
     PlayerLeaderCategory,
     ScoreboardMatch,
     ScoreboardResponse,
+    StandingTeam,
+    StandingsResponse,
+    TeamLineup,
     TeamStats,
 )
 
@@ -63,6 +69,30 @@ class EspnMatchDetailClient:
         _validate_league(league)
         validate_scoreboard_dates(dates)
         return self._scoreboard(league, dates, schedule_date=None)
+
+    def standings(self, league: str, season: int | None = None) -> StandingsResponse:
+        _validate_league(league)
+        params = {"season": season} if season else None
+        try:
+            response = httpx.get(
+                f"https://site.web.api.espn.com/apis/v2/sports/soccer/{league}/standings",
+                params=params,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == status.HTTP_404_NOT_FOUND:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "League standings not found") from exc
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "ESPN standings are temporarily unavailable",
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "ESPN standings are temporarily unavailable",
+            ) from exc
+        return normalize_espn_standings(league, response.json(), season=season)
 
     def schedule(
         self,
@@ -141,6 +171,67 @@ def normalize_espn_scoreboard(
     return ScoreboardResponse(league=league, date=schedule_date, matches=matches)
 
 
+def normalize_espn_standings(
+    league: str,
+    payload: dict[str, Any],
+    season: int | None = None,
+) -> StandingsResponse:
+    teams: list[StandingTeam] = []
+    groups: list[str] = []
+
+    def add_entries(entries: Any, group_name: str | None, stage_name: str | None) -> None:
+        if group_name and group_name not in groups:
+            groups.append(group_name)
+        for entry in entries if isinstance(entries, list) else []:
+            standing = _standing_team(entry, group_name, stage_name)
+            if standing is not None:
+                teams.append(standing)
+
+    standings = payload.get("standings")
+    if isinstance(standings, list):
+        for group in standings:
+            group_dict = _as_dict(group)
+            group_name = _string(group_dict.get("name")) or _string(group_dict.get("displayName"))
+            stage_name = _string(group_dict.get("abbreviation")) or _string(group_dict.get("shortName"))
+            add_entries(group_dict.get("entries"), group_name, stage_name)
+            for child in group_dict.get("children") or []:
+                child_dict = _as_dict(child)
+                child_name = _string(child_dict.get("name")) or _string(child_dict.get("displayName")) or group_name
+                child_stage = _string(child_dict.get("abbreviation")) or _string(child_dict.get("shortName")) or stage_name
+                add_entries(child_dict.get("entries"), child_name, child_stage)
+    elif isinstance(standings, dict):
+        standings_dict = _as_dict(standings)
+        add_entries(standings_dict.get("entries"), _string(standings_dict.get("name")), _string(standings_dict.get("abbreviation")))
+        for child in standings_dict.get("children") or []:
+            child_dict = _as_dict(child)
+            add_entries(
+                child_dict.get("entries"),
+                _string(child_dict.get("name")) or _string(child_dict.get("displayName")),
+                _string(child_dict.get("abbreviation")) or _string(child_dict.get("shortName")),
+            )
+
+    children = payload.get("children")
+    for child in children if isinstance(children, list) else []:
+        child_dict = _as_dict(child)
+        child_name = _string(child_dict.get("name")) or _string(child_dict.get("displayName"))
+        child_stage = _string(child_dict.get("abbreviation")) or _string(child_dict.get("shortName"))
+        standings_dict = _as_dict(child_dict.get("standings"))
+        add_entries(standings_dict.get("entries") or child_dict.get("entries"), child_name, child_stage)
+
+    deduped: dict[tuple[str, str | None], StandingTeam] = {}
+    for team in teams:
+        deduped[(team.teamId, team.group)] = team
+    return StandingsResponse(
+        league=league,
+        season=season or _int_or_none(_as_dict(payload.get("season")).get("year")),
+        groups=groups,
+        teams=sorted(
+            deduped.values(),
+            key=lambda item: ((item.group or ""), item.rank if item.rank is not None else 999, item.name),
+        ),
+    )
+
+
 def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) -> MatchDetail:
     competition = _competition(payload)
     competitors = competition.get("competitors") or []
@@ -148,6 +239,8 @@ def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) 
     away = _find_competitor(competitors, "away") or (competitors[1] if len(competitors) > 1 else None)
     status_type = _as_dict(_as_dict(competition.get("status")).get("type"))
     article = _as_dict(payload.get("article"))
+    boxscore = _as_dict(payload.get("boxscore"))
+    game_info = _as_dict(payload.get("gameInfo"))
 
     return MatchDetail(
         matchId=str(event_id),
@@ -158,9 +251,16 @@ def normalize_espn_summary(league: str, event_id: str, payload: dict[str, Any]) 
         kickoff=_string(competition.get("date")) or _string(_as_dict(payload.get("header")).get("date")),
         homeTeam=_team(home),
         awayTeam=_team(away),
-        venue=_venue(competition.get("venue")),
-        teamStats=_team_stats(payload.get("boxscore")),
+        venue=_venue(competition.get("venue")) or _venue(game_info.get("venue")),
+        officials=_officials(competition.get("officials"))
+        or _officials(game_info.get("officials"))
+        or _officials(payload.get("officials")),
+        weather=_weather(competition.get("weather"))
+        or _weather(game_info.get("weather"))
+        or _weather(payload.get("weather")),
+        teamStats=_team_stats(boxscore),
         playerLeaders=_player_leaders(payload.get("leaders")),
+        lineups=_lineups(boxscore, competitors),
         events=_events(competition.get("details"), payload.get("commentary")),
         summary=_string(article.get("story")) or _string(article.get("description")),
     )
@@ -276,6 +376,44 @@ def _team(competitor: dict[str, Any] | None) -> MatchTeam | None:
     )
 
 
+def _standing_team(entry: Any, group_name: str | None, stage_name: str | None) -> StandingTeam | None:
+    entry_dict = _as_dict(entry)
+    team = _as_dict(entry_dict.get("team"))
+    team_id = _string(team.get("id")) or _string(entry_dict.get("id"))
+    if not team_id:
+        return None
+    stats = {
+        (_string(stat.get("name")) or _string(stat.get("abbreviation")) or "").casefold(): stat
+        for stat in (_as_dict(item) for item in entry_dict.get("stats") or [])
+    }
+
+    def stat_int(*names: str) -> int | None:
+        for name in names:
+            stat = stats.get(name.casefold())
+            value = _int_or_none(_as_dict(stat).get("value"))
+            if value is not None:
+                return value
+            display_value = _int_or_none(_as_dict(stat).get("displayValue"))
+            if display_value is not None:
+                return display_value
+        return None
+
+    return StandingTeam(
+        rank=stat_int("rank", "overall", "position") or _int_or_none(entry_dict.get("rank")),
+        teamId=team_id,
+        name=_string(team.get("displayName")) or _string(team.get("name")) or team_id,
+        abbreviation=_string(team.get("abbreviation")) or _string(team.get("shortDisplayName")),
+        logo=_logo(team),
+        group=group_name,
+        stage=stage_name,
+        played=stat_int("gamesPlayed", "gamesplayed", "gp"),
+        wins=stat_int("wins", "w"),
+        draws=stat_int("ties", "draws", "d", "t"),
+        losses=stat_int("losses", "l"),
+        points=stat_int("points", "pts"),
+    )
+
+
 def _venue(value: Any) -> MatchVenue | None:
     venue = _as_dict(value)
     if not venue:
@@ -284,6 +422,145 @@ def _venue(value: Any) -> MatchVenue | None:
     return MatchVenue(
         name=_string(venue.get("fullName")) or _string(venue.get("name")),
         city=_string(address.get("city")) or _string(venue.get("city")),
+    )
+
+
+def _officials(value: Any) -> list[MatchOfficial]:
+    if not isinstance(value, list):
+        return []
+    officials: list[MatchOfficial] = []
+    for item in value:
+        item_dict = _as_dict(item)
+        name = (
+            _string(item_dict.get("displayName"))
+            or _string(item_dict.get("fullName"))
+            or _string(item_dict.get("name"))
+        )
+        role = (
+            _string(item_dict.get("role"))
+            or _string(item_dict.get("position"))
+            or _string(item_dict.get("type"))
+        )
+        if name or role:
+            officials.append(MatchOfficial(name=name, role=role))
+    return officials
+
+
+def _weather(value: Any) -> MatchWeather | None:
+    weather = _as_dict(value)
+    if not weather:
+        return None
+    temperature = (
+        _string(weather.get("temperature"))
+        or _string(weather.get("temperatureDisplayValue"))
+        or _string(weather.get("highTemperature"))
+    )
+    condition = (
+        _string(weather.get("condition"))
+        or _string(weather.get("displayName"))
+        or _string(weather.get("shortDisplayName"))
+    )
+    display_value = (
+        _string(weather.get("displayValue"))
+        or " ".join(item for item in [temperature, condition] if item)
+        or None
+    )
+    if not display_value and not temperature and not condition:
+        return None
+    return MatchWeather(
+        displayValue=display_value,
+        temperature=temperature,
+        condition=condition,
+    )
+
+
+def _lineups(boxscore: dict[str, Any], competitors: list[Any]) -> list[TeamLineup]:
+    raw_teams = boxscore.get("teams")
+    if not isinstance(raw_teams, list):
+        return []
+    competitor_by_id = {
+        team_id: _as_dict(competitor)
+        for competitor in competitors
+        if (team_id := _string(_as_dict(_as_dict(competitor).get("team")).get("id")) or _string(_as_dict(competitor).get("id")))
+    }
+    lineups: list[TeamLineup] = []
+    for item in raw_teams:
+        team_block = _as_dict(item)
+        team = _as_dict(team_block.get("team"))
+        team_id = _string(team.get("id")) or _string(team_block.get("teamId"))
+        competitor = competitor_by_id.get(team_id or "", {})
+        lineup_source = _as_dict(team_block.get("lineup")) or team_block
+        athletes = (
+            lineup_source.get("athletes")
+            or lineup_source.get("players")
+            or team_block.get("athletes")
+            or team_block.get("players")
+            or []
+        )
+        players = []
+        for player in athletes if isinstance(athletes, list) else []:
+            parsed = _lineup_player(player)
+            if parsed is not None:
+                players.append(parsed)
+        starters = [player for player in players if player.starter and not player.substitute]
+        substitutes = [player for player in players if player.substitute or not player.starter]
+        coach = (
+            _coach_name(team_block.get("coach"))
+            or _coach_name(team_block.get("coaches"))
+            or _coach_name(competitor.get("coach"))
+            or _coach_name(competitor.get("coaches"))
+        )
+        if players or coach or team_id:
+            lineups.append(
+                TeamLineup(
+                    teamId=team_id,
+                    teamName=_string(team.get("displayName")) or _string(team.get("name")),
+                    formation=_string(lineup_source.get("formation")) or _string(team_block.get("formation")),
+                    coach=coach,
+                    starters=starters,
+                    substitutes=substitutes,
+                )
+            )
+    return lineups
+
+
+def _lineup_player(value: Any) -> LineupPlayer | None:
+    item = _as_dict(value)
+    athlete = _as_dict(item.get("athlete")) or _as_dict(item.get("player")) or item
+    name = _string(athlete.get("displayName")) or _string(athlete.get("fullName")) or _string(athlete.get("name"))
+    if not name:
+        return None
+    starter = bool(item.get("starter") or item.get("isStarter") or item.get("starting"))
+    substitute = bool(item.get("substitute") or item.get("isSubstitute"))
+    position = _as_dict(athlete.get("position")) or _as_dict(item.get("position"))
+    formation_place = _string(item.get("formationPlace")) or _string(item.get("formation_place"))
+    return LineupPlayer(
+        id=_string(athlete.get("id")) or _string(item.get("id")),
+        name=name,
+        position=_string(position.get("abbreviation"))
+        or _string(position.get("displayName"))
+        or _string(position.get("name"))
+        or _string(item.get("position")),
+        jersey=_string(athlete.get("jersey")) or _string(item.get("jersey")),
+        starter=starter,
+        captain=bool(item.get("captain") or item.get("isCaptain")),
+        substitute=substitute,
+        formationPlace=formation_place,
+    )
+
+
+def _coach_name(value: Any) -> str | None:
+    if isinstance(value, list):
+        for item in value:
+            name = _coach_name(item)
+            if name:
+                return name
+        return None
+    coach = _as_dict(value)
+    return (
+        _string(coach.get("displayName"))
+        or _string(coach.get("fullName"))
+        or _string(coach.get("name"))
     )
 
 

@@ -102,6 +102,13 @@ class MemoryMatchDetail:
                                 "fullName": "Goalio Stadium",
                                 "address": {"city": "Berlin"},
                             },
+                            "officials": [
+                                {"displayName": "P. Sampaio", "role": "Referee"}
+                            ],
+                            "weather": {
+                                "displayValue": "28°C Clear",
+                                "condition": "Clear",
+                            },
                             "competitors": [
                                 {
                                     "homeAway": "home",
@@ -152,6 +159,13 @@ class MemoryMatchDetail:
                                 "fullName": "Goalio Stadium",
                                 "address": {"city": "Berlin"},
                             },
+                            "officials": [
+                                {"displayName": "P. Sampaio", "role": "Referee"}
+                            ],
+                            "weather": {
+                                "displayValue": "28°C Clear",
+                                "condition": "Clear",
+                            },
                             "competitors": [
                                 {
                                     "homeAway": "home",
@@ -190,6 +204,28 @@ class MemoryMatchDetail:
                     "teams": [
                         {
                             "team": {"id": "481"},
+                            "formation": "4-2-3-1",
+                            "coach": {"displayName": "Julian Nagelsmann"},
+                            "athletes": [
+                                {
+                                    "starter": True,
+                                    "athlete": {
+                                        "id": "1",
+                                        "displayName": "Manuel Neuer",
+                                        "jersey": "1",
+                                        "position": {"abbreviation": "GK"},
+                                    },
+                                },
+                                {
+                                    "substitute": True,
+                                    "athlete": {
+                                        "id": "2",
+                                        "displayName": "Marc-Andre ter Stegen",
+                                        "jersey": "22",
+                                        "position": {"abbreviation": "GK"},
+                                    },
+                                },
+                            ],
                             "statistics": [
                                 {
                                     "name": "possessionPct",
@@ -327,10 +363,16 @@ def test_match_detail_normalization():
     assert body["homeTeam"]["score"] == 7
     assert body["awayTeam"]["abbreviation"] == "CUW"
     assert body["venue"] == {"name": "Goalio Stadium", "city": "Berlin"}
+    assert body["officials"][0] == {"name": "P. Sampaio", "role": "Referee"}
+    assert body["weather"]["displayValue"] == "28°C Clear"
     assert body["teamStats"][0]["stats"][0]["value"] == "65%"
     assert body["playerLeaders"][0]["players"][0]["name"] == "Kai Havertz"
     assert body["playerLeaders"][0]["players"][0]["jersey"] == "7"
     assert body["playerLeaders"][0]["players"][0]["espnUrl"].endswith("kai-havertz")
+    assert body["lineups"][0]["formation"] == "4-2-3-1"
+    assert body["lineups"][0]["coach"] == "Julian Nagelsmann"
+    assert body["lineups"][0]["starters"][0]["name"] == "Manuel Neuer"
+    assert body["lineups"][0]["substitutes"][0]["jersey"] == "22"
     assert body["events"][0]["minute"] == "38'"
     assert body["summary"] == "Germany won comfortably."
 

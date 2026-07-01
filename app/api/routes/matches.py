@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.dependencies import CurrentUser, get_current_user, get_match_detail_client
-from app.schemas.matches import MatchDetail, ScoreboardResponse
+from app.schemas.matches import MatchDetail, ScoreboardResponse, StandingsResponse
 from app.services.match_detail import EspnMatchDetailClient, validate_scoreboard_dates
 
 
@@ -35,6 +35,16 @@ def match_scoreboard(
 ) -> ScoreboardResponse:
     validate_scoreboard_dates(dates)
     return client.scoreboard(league, dates)
+
+
+@router.get("/{league}/standings", response_model=StandingsResponse)
+def match_standings(
+    league: str = Path(max_length=40),
+    season: int | None = Query(default=None, ge=2000, le=2100),
+    _: CurrentUser = Depends(get_current_user),
+    client: EspnMatchDetailClient = Depends(get_match_detail_client),
+) -> StandingsResponse:
+    return client.standings(league, season)
 
 
 @router.get("/{league}/schedule", response_model=ScoreboardResponse)
