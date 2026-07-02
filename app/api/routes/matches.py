@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-from app.api.dependencies import CurrentUser, get_current_user, get_football_data_provider, get_lineup_store, get_match_detail_client, get_match_detail_store, get_scoreboard_store, get_thesportsdb_provider
+from app.api.dependencies import CurrentUser, get_current_user, get_football_data_provider, get_lineup_store, get_match_detail_client, get_match_detail_store, get_media_repository, get_scoreboard_store, get_thesportsdb_provider, get_watch_provider_repository, get_youtube_highlight_client
 from app.schemas.lineups import MatchLineupResponse
 from app.schemas.matches import MatchDetail, ScoreboardResponse, StandingsResponse
 from app.services.lineups import LineupService, LineupStore
@@ -8,6 +8,9 @@ from app.services.match_detail import EspnMatchDetailClient, MatchDetailStore, S
 from app.core.config import get_settings
 from app.services.lineup_providers.thesportsdb import TheSportsDbProvider
 from app.services.lineup_providers.football_data import FootballDataProvider
+from app.schemas.media import MatchMediaResponse, MatchWatchResponse
+from app.services.media import MatchMediaResolverService, MediaRepository, YouTubeOfficialHighlightClient
+from app.services.watch import WatchProviderRepository, WatchProviderResolverService
 
 
 router = APIRouter(
@@ -19,6 +22,29 @@ router = APIRouter(
         502: {"description": "ESPN match summary is temporarily unavailable"},
     },
 )
+
+
+@router.get("/{event_id}/media", response_model=MatchMediaResponse)
+def match_media(
+    event_id: str = Path(max_length=40),
+    _: CurrentUser = Depends(get_current_user),
+    client: EspnMatchDetailClient = Depends(get_match_detail_client),
+    repository: MediaRepository = Depends(get_media_repository),
+    youtube: YouTubeOfficialHighlightClient = Depends(get_youtube_highlight_client),
+) -> MatchMediaResponse:
+    match = client.detail("fifa.world", event_id)
+    result = MatchMediaResolverService(repository, youtube).resolve(match)
+    return result.response(cached=result.source == "cache")
+
+
+@router.get("/{event_id}/watch", response_model=MatchWatchResponse)
+def match_watch(
+    event_id: str = Path(max_length=40), country: str | None = Query(default=None, max_length=10),
+    _: CurrentUser = Depends(get_current_user),
+    client: EspnMatchDetailClient = Depends(get_match_detail_client),
+    repository: WatchProviderRepository = Depends(get_watch_provider_repository),
+) -> MatchWatchResponse:
+    return WatchProviderResolverService(repository).resolve(client.detail("fifa.world", event_id), country)
 
 
 @router.get("/{league}/{event_id}/detail", response_model=MatchDetail)

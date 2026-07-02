@@ -14,6 +14,8 @@ from app.services.lineups import FirestoreLineupStore, LineupStore
 from app.services.lineup_providers.thesportsdb import FirestoreProviderMappingStore, TheSportsDbProvider
 from app.services.lineup_providers.football_data import FootballDataProvider
 from app.services.quiz import FirestoreQuizRepository, QuizRepository
+from app.services.media import FirestoreMediaRepository, MediaRepository, YouTubeOfficialHighlightClient
+from app.services.watch import FirestoreWatchProviderRepository, WatchProviderRepository
 
 
 bearer = HTTPBearer(
@@ -97,3 +99,19 @@ def get_football_data_provider() -> FootballDataProvider:
 @lru_cache
 def get_quiz_repository() -> QuizRepository:
     return FirestoreQuizRepository(get_firestore_client())
+
+
+@lru_cache
+def get_media_repository() -> MediaRepository:
+    return FirestoreMediaRepository(get_firestore_client())
+
+
+@lru_cache
+def get_youtube_highlight_client() -> YouTubeOfficialHighlightClient:
+    settings = get_settings()
+    return YouTubeOfficialHighlightClient(settings.youtube_api_key, settings.fifa_youtube_channel_id, settings.official_broadcaster_channels_json)
+
+
+@lru_cache
+def get_watch_provider_repository() -> WatchProviderRepository:
+    return FirestoreWatchProviderRepository(get_firestore_client(), get_settings().official_broadcaster_channels_json)

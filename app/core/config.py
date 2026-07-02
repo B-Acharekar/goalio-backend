@@ -21,13 +21,16 @@ class Settings(BaseSettings):
     football_request_interval_seconds: float = 6.2
     espn_request_interval_seconds: float = 0.5
     api_football_max_requests: int = 95
+    youtube_api_key: str = ""
+    fifa_youtube_channel_id: str = ""
+    official_broadcaster_channels_json: str = "{}"
+    media_refresh_batch_size: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property
     def origins(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
-
 
 @lru_cache
 def get_settings() -> Settings:
