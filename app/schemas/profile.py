@@ -75,3 +75,7 @@ class ProfileLoginRequest(BaseModel):
 
 class ProfileLoginResponse(BaseModel):
     customToken: str
+
+
+class ProfileIdentityMatch(BaseModel):
+    matched: bool

@@ -59,12 +59,15 @@ class MemoryProfiles:
             raise HTTPException(401, "Full name or username did not match")
         return f"token-for-{profile.userId}"
 
+    def profile_matches(self, name: str, username: str) -> bool:
+        return any(item.username == username.strip().lower() and item.name.casefold() == " ".join(name.split()).casefold() for item in self.profiles.values())
+
 
 class MemoryFootball:
-    def list_teams(self, limit: int, cursor: str | None) -> TeamPage:
+    def list_teams(self, limit: int, cursor: str | None, competition_id: int | None = None) -> TeamPage:
         return TeamPage(items=[TeamResult(id="6", name="Brazil", shortName="BRA", competitionIds=[1])])
 
-    def list_players(self, limit: int, cursor: str | None) -> PlayerPage:
+    def list_players(self, limit: int, cursor: str | None, competition_id: int | None = None) -> PlayerPage:
         return PlayerPage(items=[PlayerResult(id="154", name="Lionel Messi", team="Argentina", competitionIds=[1])])
 
     def search_teams(self, query: str, limit: int, cursor: str | None) -> TeamPage:
@@ -443,6 +446,10 @@ def test_profile_round_trip_and_personalized_home():
     assert login.json()["customToken"] == "token-for-test-user"
     denied = client.post("/api/v1/auth/profile-login", json={"name": "Wrong Person", "username": "aegies"})
     assert denied.status_code == 401
+    matched = client.post("/api/v1/users/profile/identity-match", json={"name": "Aegies User", "username": "aegies"})
+    assert matched.status_code == 200 and matched.json() == {"matched": True}
+    mismatch = client.post("/api/v1/users/profile/identity-match", json={"name": "Wrong Person", "username": "aegies"})
+    assert mismatch.status_code == 200 and mismatch.json() == {"matched": False}
 
 
 def test_search_teams_and_players():

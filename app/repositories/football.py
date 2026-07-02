@@ -57,9 +57,9 @@ def search_terms(value: str) -> list[str]:
 
 
 class FootballRepository(Protocol):
-    def list_teams(self, limit: int, cursor: str | None) -> TeamPage: ...
+    def list_teams(self, limit: int, cursor: str | None, competition_id: int | None = None) -> TeamPage: ...
 
-    def list_players(self, limit: int, cursor: str | None) -> PlayerPage: ...
+    def list_players(self, limit: int, cursor: str | None, competition_id: int | None = None) -> PlayerPage: ...
 
     def search_teams(self, query: str, limit: int, cursor: str | None) -> TeamPage: ...
 
@@ -70,9 +70,10 @@ class FirestoreFootballRepository:
     def __init__(self, client: Client):
         self.client = client
 
-    def _active_page(self, collection_name: str, limit: int, cursor: str | None):
+    def _active_page(self, collection_name: str, limit: int, cursor: str | None, competition_id: int | None = None):
         collection = self.client.collection(collection_name)
-        query = collection.where(filter=FieldFilter("active", "==", True)).order_by("__name__")
+        query = collection.where(filter=FieldFilter("competition_ids", "array_contains", competition_id)) if competition_id else collection.where(filter=FieldFilter("active", "==", True))
+        query = query.order_by("__name__")
         if cursor:
             cursor_snapshot = collection.document(cursor).get()
             if cursor_snapshot.exists:
@@ -85,12 +86,12 @@ class FirestoreFootballRepository:
         page = snapshots[:limit]
         return page, page[-1].id if has_more and page else None
 
-    def list_teams(self, limit: int, cursor: str | None) -> TeamPage:
-        cache_key = f"teams:list:{limit}:{cursor or ''}"
+    def list_teams(self, limit: int, cursor: str | None, competition_id: int | None = None) -> TeamPage:
+        cache_key = f"teams:list:{competition_id or 'all'}:{limit}:{cursor or ''}"
         cached = _cache.get(cache_key)
         if cached is not None:
             return cached
-        snapshots, next_cursor = self._active_page("teams", limit, cursor)
+        snapshots, next_cursor = self._active_page("teams", limit, cursor, competition_id)
         page = TeamPage(
             items=[
                 TeamResult(
@@ -108,11 +109,13 @@ class FirestoreFootballRepository:
         _cache.set(cache_key, page)
         return page
 
-    def list_players(self, limit: int, cursor: str | None) -> PlayerPage:
-        cache_key = f"players:list:{limit}:{cursor or ''}"
+    def list_players(self, limit: int, cursor: str | None, competition_id: int | None = None) -> PlayerPage:
+        cache_key = f"players:list:{competition_id or 'all'}:{limit}:{cursor or ''}"
         cached = _cache.get(cache_key)
         if cached is not None:
             return cached
+        if competition_id is not None:
+            return self._players_for_competition(competition_id, limit, cursor)
         snapshots, next_cursor = self._active_page("players", limit, cursor)
         page = PlayerPage(
             items=self._player_results([snapshot.to_dict() for snapshot in snapshots]),
@@ -120,6 +123,19 @@ class FirestoreFootballRepository:
         )
         _cache.set(cache_key, page)
         return page
+
+    def _players_for_competition(self, competition_id: int, limit: int, cursor: str | None) -> PlayerPage:
+        mappings = self.client.collection("team_players").where(filter=FieldFilter("competitionId", "==", competition_id)).order_by("__name__")
+        if cursor:
+            cursor_snapshot = self.client.collection("team_players").document(cursor).get()
+            if cursor_snapshot.exists: mappings = mappings.start_after(cursor_snapshot)
+        try: mapping_docs = list(mappings.limit(limit + 1).stream())
+        except GoogleAPICallError as exc: _raise_firestore_unavailable(exc)
+        page_mappings = mapping_docs[:limit]
+        player_ids = list(dict.fromkeys(str(item.to_dict().get("playerId")) for item in page_mappings if item.to_dict().get("playerId")))
+        try: player_docs = list(self.client.get_all([self.client.collection("players").document(player_id) for player_id in player_ids]))
+        except GoogleAPICallError as exc: _raise_firestore_unavailable(exc)
+        return PlayerPage(items=self._player_results([item.to_dict() for item in player_docs if item.exists]), nextCursor=page_mappings[-1].id if len(mapping_docs) > limit and page_mappings else None)
 
     def search_teams(self, query: str, limit: int, cursor: str | None) -> TeamPage:
         normalized = normalize_search(query)

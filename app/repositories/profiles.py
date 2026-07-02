@@ -13,6 +13,7 @@ class ProfileRepository(Protocol):
     def upsert(self, uid: str, profile: ProfileUpsert) -> UserProfile: ...
     def is_username_available(self, username: str, uid: str) -> bool: ...
     def profile_login(self, name: str, username: str) -> str: ...
+    def profile_matches(self, name: str, username: str) -> bool: ...
 
 
 class FirestoreProfileRepository:
@@ -42,18 +43,27 @@ class FirestoreProfileRepository:
         return not snapshot.exists or snapshot.to_dict().get("userId") == uid
 
     def profile_login(self, name: str, username: str) -> str:
+        uid = self._matching_profile_uid(name, username)
+        if uid is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Full name or username did not match")
+        token = auth.create_custom_token(uid)
+        return token.decode("utf-8") if isinstance(token, bytes) else str(token)
+
+    def profile_matches(self, name: str, username: str) -> bool:
+        return self._matching_profile_uid(name, username) is not None
+
+    def _matching_profile_uid(self, name: str, username: str) -> str | None:
         normalized_username = username.strip().lower()
         normalized_name = " ".join(name.strip().split()).casefold()
         username_snapshot = self.client.collection("usernames").document(normalized_username).get()
         if not username_snapshot.exists:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Full name or username did not match")
+            return None
         uid = username_snapshot.to_dict().get("userId")
         user_snapshot = self.client.collection("users").document(uid).get() if uid else None
         stored_name = " ".join((user_snapshot.to_dict().get("name") if user_snapshot and user_snapshot.exists else "").strip().split()).casefold()
         if not uid or stored_name != normalized_name:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Full name or username did not match")
-        token = auth.create_custom_token(uid)
-        return token.decode("utf-8") if isinstance(token, bytes) else str(token)
+            return None
+        return str(uid)
 
     def _resolve_favorites(self, collection_name: str, ids: list[str]) -> list[str]:
         if not ids:

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.dependencies import CurrentUser, get_current_user, get_profile_repository
 from app.repositories.profiles import ProfileRepository
-from app.schemas.profile import PersonalizedHome, ProfileLoginRequest, ProfileLoginResponse, ProfileUpsert, UserProfile, UsernameAvailability
+from app.schemas.profile import PersonalizedHome, ProfileIdentityMatch, ProfileLoginRequest, ProfileLoginResponse, ProfileUpsert, UserProfile, UsernameAvailability
 
 
 router = APIRouter(
@@ -18,6 +18,15 @@ router = APIRouter(
 @router.post("/auth/profile-login", response_model=ProfileLoginResponse)
 def profile_login(payload: ProfileLoginRequest, repository: ProfileRepository = Depends(get_profile_repository)) -> ProfileLoginResponse:
     return ProfileLoginResponse(customToken=repository.profile_login(payload.name, payload.username))
+
+
+@router.post("/users/profile/identity-match", response_model=ProfileIdentityMatch)
+def profile_identity_match(
+    payload: ProfileLoginRequest,
+    _: CurrentUser = Depends(get_current_user),
+    repository: ProfileRepository = Depends(get_profile_repository),
+) -> ProfileIdentityMatch:
+    return ProfileIdentityMatch(matched=repository.profile_matches(payload.name, payload.username))
 
 
 @router.post("/users/profile", response_model=UserProfile)
