@@ -4,7 +4,7 @@ import pytest
 
 from app.schemas.matches import MatchDetail, MatchTeam
 from app.schemas.media import StoredMatchMedia, WatchProvider, WatchProviderConfig
-from app.services.media import MatchMediaResolverService, YouTubeQuotaError, validate_official_video
+from app.services.media import MatchMediaResolverService, YouTubeOfficialHighlightClient, YouTubeQuotaError, validate_official_video
 from app.services.watch import FIFA_FALLBACK, WatchProviderResolverService, environment_watch_config, is_legal_provider, normalize_country
 
 
@@ -34,6 +34,7 @@ class Youtube:
         self.calls += 1
         if self.error: raise self.error
         return self.result
+    def official_match_url(self, value): return "https://www.youtube.com/watch?v=officialmatch"
 
 
 def test_official_fifa_video_accepted():
@@ -60,12 +61,17 @@ def test_cached_available_highlight_returned_without_search():
 def test_pending_fallback_stored_when_highlight_missing():
     repo = MediaRepo()
     result = MatchMediaResolverService(repo, Youtube(), now=lambda: datetime(2026, 7, 1, 23, tzinfo=timezone.utc)).resolve(match())
-    assert result.highlightStatus == "pending" and repo.writes
+    assert result.highlightStatus == "pending" and result.officialMatchUrl and repo.writes
 
 
 def test_youtube_quota_failure_returns_cached_or_safe_pending():
     result = MatchMediaResolverService(MediaRepo(), Youtube(error=YouTubeQuotaError("quota")), now=lambda: NOW).resolve(match())
     assert result.highlightStatus == "pending" and result.highlightUrl is None
+
+
+def test_region_broadcaster_names_are_not_treated_as_youtube_channel_ids():
+    client = YouTubeOfficialHighlightClient("key", "UCpcTrCXblq78GZrTUTLWeBw", '{"youtubeChannels":{"IN":["Broadcaster"]}}')
+    assert set(client.channels) == {"UCpcTrCXblq78GZrTUTLWeBw"}
 
 
 class WatchRepo:

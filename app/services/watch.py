@@ -47,6 +47,7 @@ class WatchProviderResolverService:
         normalized = normalize_country(country)
         competition, season = _competition(match), _season(match)
         config = self.repository.get_config(competition, season)
+        if config is None: logger.warning("WATCH_CONFIG_MISSING matchId=%s competition=%s season=%s", match.matchId, competition, season)
         providers = list((config.regions.get(normalized) or config.regions.get("GLOBAL") or []) if config else [])
         providers = [provider for provider in providers if is_legal_provider(provider)]
         fallback = config.fallback if config else FIFA_FALLBACK

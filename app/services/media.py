@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+import re
 from typing import Any, Protocol
 
 import httpx
@@ -57,7 +58,9 @@ class YouTubeOfficialHighlightClient:
         if self.fifa_channel_id: self.channels[self.fifa_channel_id] = "FIFA YouTube"
 
     def search(self, match: MatchDetail) -> dict[str, Any] | None:
-        if not self.api_key or not self.fifa_channel_id: return None
+        if not self.api_key or not self.fifa_channel_id:
+            logger.warning("MEDIA_CONFIG_MISSING youtubeApiKey=%s fifaChannelId=%s", bool(self.api_key), bool(self.fifa_channel_id))
+            return None
         channel_ids = [self.fifa_channel_id, *(channel for channel in self.channels if channel != self.fifa_channel_id)]
         for channel_id in channel_ids:
             for query in _queries(match):
@@ -68,6 +71,21 @@ class YouTubeOfficialHighlightClient:
                     if accepted:
                         snippet = item["snippet"]; video_id = item["id"]["videoId"]
                         return {"videoId": video_id, "provider": self.channels.get(snippet.get("channelId"), "Official broadcaster"), "thumbnail": ((snippet.get("thumbnails") or {}).get("high") or (snippet.get("thumbnails") or {}).get("default") or {}).get("url"), "publishedAt": _parse_time(snippet.get("publishedAt")), "query": query}
+        return None
+
+    def official_match_url(self, match: MatchDetail) -> str | None:
+        if not self.api_key or not self.fifa_channel_id: return None
+        home = match.homeTeam.name if match.homeTeam else "Home"
+        away = match.awayTeam.name if match.awayTeam else "Away"
+        payload = self._request(f"{home} vs {away} FIFA World Cup 2026", self.fifa_channel_id)
+        kickoff = _parse_time(match.kickoff)
+        for item in payload.get("items") or []:
+            snippet = item.get("snippet") or {}; title = str(snippet.get("title") or "").casefold()
+            published = _parse_time(snippet.get("publishedAt")); video_id = (item.get("id") or {}).get("videoId")
+            if snippet.get("channelId") != self.fifa_channel_id or not video_id or not published or not kickoff or published < kickoff: continue
+            if not all(_team_token(name.casefold()) in title for name in (home, away)): continue
+            if any(term in title for term in ("press conference", "interview", "train", "training", "goal |", "preview")): continue
+            return f"https://www.youtube.com/watch?v={video_id}"
         return None
 
     def _request(self, query: str, channel_id: str) -> dict[str, Any]:
@@ -99,9 +117,11 @@ class MatchMediaResolverService:
             if current and current.highlightStatus == "available" and current.publishedAt and result.publishedAt and result.publishedAt <= current.publishedAt: return current
             logger.info("MEDIA_RESOLVED matchId=%s source=youtube_api query=%s", match.matchId, candidate["query"])
             return self._store(result)
+        try: official_match_url = self.youtube.official_match_url(match)
+        except (YouTubeQuotaError, RuntimeError): official_match_url = current.officialMatchUrl if current else None
         ended_at = kickoff + timedelta(hours=2)
         status = "pending" if now - ended_at < timedelta(hours=24) else "not_found"
-        return self._store(_fallback(match.matchId, status, now))
+        return self._store(_fallback(match.matchId, status, now, official_match_url))
 
     def _store(self, value: StoredMatchMedia) -> StoredMatchMedia:
         self.repository.put(value); return value
@@ -126,8 +146,8 @@ def _queries(match: MatchDetail) -> list[str]:
     queries.append(f"{home} v {away} FIFA highlights"); return queries
 
 
-def _fallback(match_id: str, status: str, now: datetime) -> StoredMatchMedia:
-    return StoredMatchMedia(matchId=match_id, highlightStatus=status, officialHighlightsPageUrl=FIFA_HIGHLIGHTS_URL, source="fifa_fallback", lastCheckedAt=now)
+def _fallback(match_id: str, status: str, now: datetime, official_match_url: str | None = None) -> StoredMatchMedia:
+    return StoredMatchMedia(matchId=match_id, highlightStatus=status, officialHighlightsPageUrl=FIFA_HIGHLIGHTS_URL, officialMatchUrl=official_match_url, source="fifa_fallback", lastCheckedAt=now)
 
 
 def _channel_map(raw: str) -> dict[str, str]:
@@ -135,8 +155,8 @@ def _channel_map(raw: str) -> dict[str, str]:
     except ValueError: return {}
     if isinstance(value, dict) and "youtubeChannels" in value:
         value = value.get("youtubeChannels") or {}
-    if isinstance(value, dict): return {str(key): str(name) for key, name in value.items()}
-    if isinstance(value, list): return {str(item.get("channelId")): str(item.get("name") or "Official broadcaster") for item in value if isinstance(item, dict) and item.get("channelId")}
+    if isinstance(value, dict): return {str(key): str(name) for key, name in value.items() if re.fullmatch(r"UC[0-9A-Za-z_-]{20,}", str(key))}
+    if isinstance(value, list): return {str(item.get("channelId")): str(item.get("name") or "Official broadcaster") for item in value if isinstance(item, dict) and re.fullmatch(r"UC[0-9A-Za-z_-]{20,}", str(item.get("channelId") or ""))}
     return {}
 
 
