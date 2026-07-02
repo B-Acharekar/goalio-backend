@@ -159,9 +159,10 @@ class FirestoreMatchDetailStore:
 
 
 class EspnMatchDetailClient:
-    def __init__(self, base_url: str = ESPN_SUMMARY_BASE_URL, timeout: float = 8.0):
+    def __init__(self, base_url: str = ESPN_SUMMARY_BASE_URL, timeout: float = 8.0, thesportsdb: Any = None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.thesportsdb = thesportsdb
 
     def cached_detail(self, league: str, event_id: str, store: MatchDetailStore) -> MatchDetail:
         cached = store.get(league, event_id)
@@ -173,7 +174,7 @@ class EspnMatchDetailClient:
 
     def detail(self, league: str, event_id: str) -> MatchDetail:
         detail = self.espn_detail(league, event_id)
-        if not detail.lineups:
+        if not any(team.starters or team.substitutes for team in detail.lineups):
             lineups = self._lineups_from_fallbacks(league, event_id, detail)
             if lineups:
                 detail.lineups = lineups
@@ -237,10 +238,19 @@ class EspnMatchDetailClient:
         return result
 
     def _lineups_from_fallbacks(self, league: str, event_id: str, detail: MatchDetail) -> list[TeamLineup]:
+        lineups = []
+        if getattr(self, "thesportsdb", None) is not None:
+            from app.services.lineup_providers.base import MatchMeta
+            provider = self.thesportsdb() if callable(self.thesportsdb) else self.thesportsdb
+            result = provider.fetch(MatchMeta.from_espn(detail))
+            if result and result.lineups:
+                lineups = result.lineups
+                
         return (
-            self._lineups_from_espn_hidden_api(league, event_id)
-            or self._lineups_from_google_sports(league, event_id)
-            or self._lineups_from_espn_match_page(league, event_id)
+            lineups
+            or self._lineups_from_espn_hidden_api(league, event_id)
+            or self._lineups_from_google_sports(league, event_id, detail)
+            or self._lineups_from_espn_match_page(league, event_id, detail)
             or self._squad_lineups(detail)
         )
 
@@ -306,7 +316,7 @@ class EspnMatchDetailClient:
             return []
         return _lineups_from_html(response.text)
 
-    def _lineups_from_espn_match_page(self, league: str, event_id: str) -> list[TeamLineup]:
+    def _lineups_from_espn_match_page(self, league: str, event_id: str, detail: MatchDetail | None = None) -> list[TeamLineup]:
         try:
             response = httpx.get(
                 f"https://www.espn.com/soccer/match/_/gameId/{event_id}",
@@ -316,7 +326,56 @@ class EspnMatchDetailClient:
             response.raise_for_status()
         except httpx.HTTPError:
             return []
-        return _lineups_from_html(response.text)
+            
+        lineups = _lineups_from_html(response.text)
+        if lineups:
+            return lineups
+            
+        # Fallback to direct HTML parsing via BeautifulSoup if JSON is missing
+        return self._scrape_lineups_with_bs4(response.text, detail)
+
+    def _scrape_lineups_with_bs4(self, html: str, detail: MatchDetail | None) -> list[TeamLineup]:
+        if not detail or not detail.homeTeam or not detail.awayTeam:
+            return []
+            
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+        except ImportError:
+            return []
+
+        home = TeamLineup(teamId=detail.homeTeam.id, teamName=detail.homeTeam.shortName or detail.homeTeam.name)
+        away = TeamLineup(teamId=detail.awayTeam.id, teamName=detail.awayTeam.shortName or detail.awayTeam.name)
+        
+        home_seen, away_seen = set(), set()
+        
+        for a in soup.find_all("a", attrs={"data-track-athlete": True}):
+            player_name = a.get("data-track-athlete").strip()
+            team_name = a.get("data-track-teamname", "").strip()
+            player_id = (a.get("href") or "").split("/id/")[-1].split("/")[0] if "/id/" in (a.get("href") or "") else None
+            
+            target, seen = None, None
+            if team_name == home.teamName or (detail.homeTeam.abbreviation and detail.homeTeam.abbreviation in team_name):
+                target, seen = home, home_seen
+            elif team_name == away.teamName or (detail.awayTeam.abbreviation and detail.awayTeam.abbreviation in team_name):
+                target, seen = away, away_seen
+                
+            if target is not None and player_name not in seen:
+                seen.add(player_name)
+                is_starter = len(target.starters) < 11
+                player = LineupPlayer(
+                    id=player_id,
+                    name=player_name,
+                    starter=is_starter,
+                    substitute=not is_starter,
+                    role="Starter" if is_starter else "Bench"
+                )
+                if is_starter:
+                    target.starters.append(player)
+                else:
+                    target.substitutes.append(player)
+
+        return [home, away] if home.starters or away.starters else []
 
     def _lineups_from_yahoo_sports(self, league: str, event_id: str, detail: MatchDetail | None = None) -> list[TeamLineup]:
         headers = {"User-Agent": "Mozilla/5.0 GoalioBot/1.0"}

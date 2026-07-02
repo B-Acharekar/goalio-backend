@@ -62,7 +62,7 @@ def get_football_repository() -> FootballRepository:
 
 @lru_cache
 def get_match_detail_client() -> EspnMatchDetailClient:
-    return EspnMatchDetailClient()
+    return EspnMatchDetailClient(thesportsdb=get_thesportsdb_provider)
 
 
 @lru_cache
@@ -84,7 +84,7 @@ def get_lineup_store() -> LineupStore:
 def get_thesportsdb_provider() -> TheSportsDbProvider:
     settings = get_settings()
     return TheSportsDbProvider(settings.thesportsdb_api_key, settings.thesportsdb_base_url,
-                               settings.thesportsdb_use_v2_fallback, FirestoreProviderMappingStore(get_firestore_client()))
+                               settings.thesportsdb_use_v2_fallback, FirestoreProviderMappingStore(get_firestore_client))
 
 
 @lru_cache

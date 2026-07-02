@@ -93,7 +93,7 @@ class LineupService:
         cached = self.store.get(event_id)
         attempts: list[dict] = []
         try:
-            detail = self.client.espn_detail(league, event_id)
+            detail = self.client.detail(league, event_id)
             attempts.append({"provider": "espn", "step": "load_match_detail", "success": True,
                              "availableKeys": [key for key, value in detail.model_dump().items() if value not in (None, [], {})], "reason": None})
         except Exception as exc:

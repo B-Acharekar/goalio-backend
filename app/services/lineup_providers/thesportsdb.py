@@ -26,17 +26,19 @@ ALIASES = {
 }
 
 
+from typing import Callable, Protocol
+
 class ProviderMappingStore(Protocol):
     def get(self, event_id: str) -> dict | None: ...
     def write(self, event_id: str, mapping: dict) -> None: ...
 
 
 class FirestoreProviderMappingStore:
-    def __init__(self, client: Client):
-        self.client = client
+    def __init__(self, client_factory: Callable[[], Client]):
+        self.client_factory = client_factory
 
     def _ref(self, event_id: str):
-        return self.client.collection("matches").document(event_id).collection("providerMappings").document("theSportsDb")
+        return self.client_factory().collection("matches").document(event_id).collection("providerMappings").document("theSportsDb")
 
     def get(self, event_id: str) -> dict | None:
         snapshot = self._ref(event_id).get()
